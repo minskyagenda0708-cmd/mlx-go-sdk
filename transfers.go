@@ -13,9 +13,11 @@ import (
 type TransfersService interface {
 	Export(context.Context, string) (*ExportProfileResponse, *Response, error)
 	ExportStatus(context.Context, string) (*ExportStatusResponse, *Response, error)
+	WaitForExportDone(context.Context, string, PollOptions) (*ExportStatusResponse, *Response, error)
 	ExportStatuses(context.Context) (*ExportStatusesResponse, *Response, error)
 	Import(context.Context, *ImportProfileRequest) (*ImportProfileResponse, *Response, error)
 	ImportStatus(context.Context, string) (*ImportStatusResponse, *Response, error)
+	WaitForImportDone(context.Context, string, PollOptions) (*ImportStatusResponse, *Response, error)
 	ImportStatuses(context.Context) (*ImportStatusesResponse, *Response, error)
 }
 
@@ -160,6 +162,22 @@ func (s *TransfersServiceOp) ExportStatus(ctx context.Context, exportID string) 
 	return out, resp, err
 }
 
+func (s *TransfersServiceOp) WaitForExportDone(ctx context.Context, exportID string, opts PollOptions) (*ExportStatusResponse, *Response, error) {
+	if exportID == "" {
+		return nil, nil, NewArgError("exportID", "it must not be empty")
+	}
+	return pollUntil(ctx, opts, fmt.Sprintf("export %s did not reach done status", exportID), func(ctx context.Context) (*ExportStatusResponse, *Response, error) {
+		return s.ExportStatus(ctx, exportID)
+	}, func(resp *ExportStatusResponse) bool {
+		return resp != nil && strings.EqualFold(resp.Data.Status, "done")
+	}, func(resp *ExportStatusResponse) string {
+		if resp == nil {
+			return ""
+		}
+		return resp.Data.Status
+	})
+}
+
 func (s *TransfersServiceOp) ExportStatuses(ctx context.Context) (*ExportStatusesResponse, *Response, error) {
 	req, err := s.client.newLauncherRequest(ctx, http.MethodGet, "/api/v1/profile/exports/statuses", nil)
 	if err != nil {
@@ -195,6 +213,22 @@ func (s *TransfersServiceOp) ImportStatus(ctx context.Context, importID string) 
 	out := new(ImportStatusResponse)
 	resp, err := s.client.do(req, out)
 	return out, resp, err
+}
+
+func (s *TransfersServiceOp) WaitForImportDone(ctx context.Context, importID string, opts PollOptions) (*ImportStatusResponse, *Response, error) {
+	if importID == "" {
+		return nil, nil, NewArgError("importID", "it must not be empty")
+	}
+	return pollUntil(ctx, opts, fmt.Sprintf("import %s did not reach done status", importID), func(ctx context.Context) (*ImportStatusResponse, *Response, error) {
+		return s.ImportStatus(ctx, importID)
+	}, func(resp *ImportStatusResponse) bool {
+		return resp != nil && strings.EqualFold(resp.Data.Status, "done")
+	}, func(resp *ImportStatusResponse) string {
+		if resp == nil {
+			return ""
+		}
+		return resp.Data.Status
+	})
 }
 
 func (s *TransfersServiceOp) ImportStatuses(ctx context.Context) (*ImportStatusesResponse, *Response, error) {

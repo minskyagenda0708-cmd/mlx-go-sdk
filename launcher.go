@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 // AutomationType describes the launcher automation mode.
@@ -24,6 +25,7 @@ type LauncherService interface {
 	StopAll(context.Context, StopAllProfilesOptions) (*EmptyDataResponse, *Response, error)
 	Health(context.Context) (*LauncherHealthResponse, *Response, error)
 	Status(context.Context, string) (*ProfileRuntimeStatusResponse, *Response, error)
+	WaitForRunning(context.Context, string, PollOptions) (*ProfileRuntimeStatusResponse, *Response, error)
 	Statuses(context.Context) (*AllProfileStatusesResponse, *Response, error)
 	QuickStatuses(context.Context) (*QuickProfileStatusesResponse, *Response, error)
 	Version(context.Context) (*LauncherVersionResponse, *Response, error)
@@ -99,7 +101,7 @@ func (r *AllProfileStatusesResponse) GetStatus() Status { return r.Status }
 
 // AllProfileStatusesData wraps all launcher states.
 type AllProfileStatusesData struct {
-	ActiveCounter LauncherActiveCounter          `json:"active_counter"`
+	ActiveCounter LauncherActiveCounter           `json:"active_counter"`
 	States        map[string]ProfileRuntimeStatus `json:"states"`
 }
 
@@ -252,6 +254,26 @@ func (s *LauncherServiceOp) Status(ctx context.Context, profileID string) (*Prof
 	out := new(ProfileRuntimeStatusResponse)
 	resp, err := s.client.do(req, out)
 	return out, resp, err
+}
+
+func (s *LauncherServiceOp) WaitForRunning(ctx context.Context, profileID string, opts PollOptions) (*ProfileRuntimeStatusResponse, *Response, error) {
+	if profileID == "" {
+		return nil, nil, NewArgError("profileID", "it must not be empty")
+	}
+	return pollUntil(ctx, opts, fmt.Sprintf("profile %s did not reach running status", profileID), func(ctx context.Context) (*ProfileRuntimeStatusResponse, *Response, error) {
+		return s.Status(ctx, profileID)
+	}, func(resp *ProfileRuntimeStatusResponse) bool {
+		if resp == nil {
+			return false
+		}
+		status := resp.Data.Status
+		return status == "browser_running" || strings.Contains(strings.ToLower(status), "running")
+	}, func(resp *ProfileRuntimeStatusResponse) string {
+		if resp == nil {
+			return ""
+		}
+		return resp.Data.Status
+	})
 }
 
 func (s *LauncherServiceOp) Statuses(ctx context.Context) (*AllProfileStatusesResponse, *Response, error) {

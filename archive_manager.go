@@ -157,19 +157,13 @@ func (m *ArchiveManagerOp) ExportProfileToFolder(ctx context.Context, profileID 
 }
 
 func (m *ArchiveManagerOp) waitForExport(ctx context.Context, exportID string, pollInterval, waitTimeout time.Duration) (*ExportStatusResponse, error) {
-	deadline := time.Now().Add(waitTimeout)
-	for time.Now().Before(deadline) {
-		resp, _, err := m.client.Transfers.ExportStatus(ctx, exportID)
-		if err == nil && strings.EqualFold(resp.Data.Status, "done") {
-			return resp, nil
-		}
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(pollInterval):
-		}
-	}
-	return nil, fmt.Errorf("export %s did not reach done status before timeout", exportID)
+	resp, _, err := m.client.Transfers.WaitForExportDone(ctx, exportID, PollOptions{
+		InitialInterval: pollInterval,
+		MaxInterval:     pollInterval,
+		Timeout:         waitTimeout,
+		Multiplier:      1,
+	})
+	return resp, err
 }
 
 func sanitizeArchiveFolderName(name string) string {

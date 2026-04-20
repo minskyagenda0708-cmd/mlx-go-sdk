@@ -617,64 +617,31 @@ func waitForProfileAbsent(t *testing.T, client *Client, profileName string, remo
 func waitForRunningStatus(t *testing.T, client *Client, profileID string) *ProfileRuntimeStatusResponse {
 	t.Helper()
 
-	deadline := time.Now().Add(2 * time.Minute)
-	for time.Now().Before(deadline) {
-		resp, _, err := client.Launcher.Status(context.Background(), profileID)
-		if err == nil && (resp.Data.Status == "browser_running" || strings.Contains(strings.ToLower(resp.Data.Status), "running")) {
-			return resp
-		}
-		if err != nil {
-			t.Logf("waiting for running status: %v", err)
-		} else {
-			t.Logf("waiting for running status, current=%s", fmt.Sprintf("%s", resp.Data.Status))
-		}
-		time.Sleep(2 * time.Second)
+	resp, _, err := client.Launcher.WaitForRunning(context.Background(), profileID, PollOptions{})
+	if err != nil {
+		t.Fatalf("Launcher.WaitForRunning returned error: %v", err)
 	}
-
-	t.Fatalf("profile %s did not reach running status before timeout", profileID)
-	return nil
+	return resp
 }
 
 func waitForExportDone(t *testing.T, client *Client, exportID string) *ExportStatusResponse {
 	t.Helper()
 
-	deadline := time.Now().Add(2 * time.Minute)
-	for time.Now().Before(deadline) {
-		resp, _, err := client.Transfers.ExportStatus(context.Background(), exportID)
-		if err == nil && strings.EqualFold(resp.Data.Status, "done") {
-			return resp
-		}
-		if err != nil {
-			t.Logf("waiting for export status: %v", err)
-		} else {
-			t.Logf("waiting for export status, current=%s", resp.Data.Status)
-		}
-		time.Sleep(2 * time.Second)
+	resp, _, err := client.Transfers.WaitForExportDone(context.Background(), exportID, PollOptions{})
+	if err != nil {
+		t.Fatalf("Transfers.WaitForExportDone returned error: %v", err)
 	}
-
-	t.Fatalf("export %s did not reach done status before timeout", exportID)
-	return nil
+	return resp
 }
 
 func waitForImportDone(t *testing.T, client *Client, importID string) *ImportStatusResponse {
 	t.Helper()
 
-	deadline := time.Now().Add(2 * time.Minute)
-	for time.Now().Before(deadline) {
-		resp, _, err := client.Transfers.ImportStatus(context.Background(), importID)
-		if err == nil && strings.EqualFold(resp.Data.Status, "done") {
-			return resp
-		}
-		if err != nil {
-			t.Logf("waiting for import status: %v", err)
-		} else {
-			t.Logf("waiting for import status, current=%s", resp.Data.Status)
-		}
-		time.Sleep(2 * time.Second)
+	resp, _, err := client.Transfers.WaitForImportDone(context.Background(), importID, PollOptions{})
+	if err != nil {
+		t.Fatalf("Transfers.WaitForImportDone returned error: %v", err)
 	}
-
-	t.Fatalf("import %s did not reach done status before timeout", importID)
-	return nil
+	return resp
 }
 
 func hasCookieWebsite(websites []CookieWebsite, key string) bool {

@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"mlx-go-sdk/internal/testutil"
 )
@@ -157,5 +159,36 @@ func TestLauncherQuickStatuses(t *testing.T) {
 	}
 	if resp.Data.States["quick-1"].Timestamp != 1744706373229 {
 		t.Fatalf("unexpected timestamp: %d", resp.Data.States["quick-1"].Timestamp)
+	}
+}
+
+func TestLauncherWaitForRunningRetries(t *testing.T) {
+	var calls atomic.Int32
+	server, httpClient := testutil.NewServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/profile/status/p/profile-1" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if calls.Add(1) < 3 {
+			fmt.Fprint(w, `{"status":{"http_code":200,"message":""},"data":{"profile_id":"profile-1","name":"Demo","status":"start_browser","browser_type":"mimic","core_version":137,"folder_id":"folder-1","workspace_id":"workspace-1","message":""}}`)
+			return
+		}
+		fmt.Fprint(w, `{"status":{"http_code":200,"message":""},"data":{"profile_id":"profile-1","name":"Demo","status":"browser_running","browser_type":"mimic","core_version":137,"folder_id":"folder-1","workspace_id":"workspace-1","message":"","timestamp":1745100000000}}`)
+	})
+
+	client, err := New(
+		WithToken("test-token"),
+		WithHTTPClient(httpClient),
+		WithLauncherURL(server.URL),
+	)
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+
+	resp, _, err := client.Launcher.WaitForRunning(context.Background(), "profile-1", PollOptions{InitialInterval: time.Millisecond, MaxInterval: 2 * time.Millisecond, Timeout: time.Second, Multiplier: 2})
+	if err != nil {
+		t.Fatalf("Launcher.WaitForRunning returned error: %v", err)
+	}
+	if resp.Data.Status != "browser_running" {
+		t.Fatalf("unexpected status: %s", resp.Data.Status)
 	}
 }
