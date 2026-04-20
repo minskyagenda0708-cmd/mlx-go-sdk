@@ -2,6 +2,7 @@ package mlx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +17,9 @@ import (
 func TestE2ELauncherHealth(t *testing.T) {
 	if os.Getenv(EnvRunE2E) != "1" {
 		t.Skipf("set %s=1 to run E2E tests", EnvRunE2E)
+	}
+	if skipForRateLimit(t) {
+		return
 	}
 
 	client, err := NewFromEnv(WithTimeout(30 * time.Second))
@@ -40,6 +44,9 @@ func TestE2ELauncherHealth(t *testing.T) {
 func TestE2EProfileLookupHelpers(t *testing.T) {
 	if os.Getenv(EnvRunE2E) != "1" {
 		t.Skipf("set %s=1 to run E2E tests", EnvRunE2E)
+	}
+	if skipForRateLimit(t) {
+		return
 	}
 
 	client, err := NewFromEnv(WithTimeout(60 * time.Second))
@@ -90,6 +97,9 @@ func TestE2EProfileLookupHelpers(t *testing.T) {
 func TestE2ETypedLauncherModels(t *testing.T) {
 	if os.Getenv(EnvRunE2E) != "1" {
 		t.Skipf("set %s=1 to run E2E tests", EnvRunE2E)
+	}
+	if skipForRateLimit(t) {
+		return
 	}
 
 	client, err := NewFromEnv(WithTimeout(60 * time.Second))
@@ -172,6 +182,9 @@ func TestE2ERodConnection(t *testing.T) {
 	if os.Getenv(EnvRunE2E) != "1" {
 		t.Skipf("set %s=1 to run E2E tests", EnvRunE2E)
 	}
+	if skipForRateLimit(t) {
+		return
+	}
 
 	client, err := NewFromEnv(WithTimeout(60 * time.Second))
 	if err != nil {
@@ -243,6 +256,9 @@ func TestE2ERodConnection(t *testing.T) {
 func TestE2EProfileLifecycle(t *testing.T) {
 	if os.Getenv(EnvRunE2E) != "1" {
 		t.Skipf("set %s=1 to run E2E tests", EnvRunE2E)
+	}
+	if skipForRateLimit(t) {
+		return
 	}
 
 	client, err := NewFromEnv(WithTimeout(60 * time.Second))
@@ -391,6 +407,9 @@ func TestE2EProfileTransferLifecycle(t *testing.T) {
 	if os.Getenv(EnvRunE2E) != "1" {
 		t.Skipf("set %s=1 to run E2E tests", EnvRunE2E)
 	}
+	if skipForRateLimit(t) {
+		return
+	}
 
 	client, err := NewFromEnv(WithTimeout(60 * time.Second))
 	if err != nil {
@@ -488,6 +507,9 @@ func TestE2EProfileCookieSeeding(t *testing.T) {
 	if os.Getenv(EnvRunE2E) != "1" {
 		t.Skipf("set %s=1 to run E2E tests", EnvRunE2E)
 	}
+	if skipForRateLimit(t) {
+		return
+	}
 
 	client, err := NewFromEnv(WithTimeout(60 * time.Second))
 	if err != nil {
@@ -562,6 +584,9 @@ func TestE2EArchiveManagerExportToFolder(t *testing.T) {
 	if os.Getenv(EnvRunE2E) != "1" {
 		t.Skipf("set %s=1 to run E2E tests", EnvRunE2E)
 	}
+	if skipForRateLimit(t) {
+		return
+	}
 
 	client, err := NewFromEnv(WithTimeout(60 * time.Second))
 	if err != nil {
@@ -611,6 +636,119 @@ func TestE2EArchiveManagerExportToFolder(t *testing.T) {
 	}
 
 	t.Logf("archive manager export ok: profile=%s export_id=%s archive_dir=%s archive_path=%s raw_export_path=%s", profileID, result.ExportJob.Data.ExportID, result.Archive.ArchiveDir, result.Archive.ArchivePath, result.ExportJob.Data.ExportPath)
+}
+
+func TestE2EWorkflowHelpers(t *testing.T) {
+	if os.Getenv(EnvRunE2E) != "1" {
+		t.Skipf("set %s=1 to run E2E tests", EnvRunE2E)
+	}
+	if skipForRateLimit(t) {
+		return
+	}
+
+	client, err := NewFromEnv(WithTimeout(60 * time.Second))
+	if err != nil {
+		t.Fatalf("NewFromEnv returned error: %v", err)
+	}
+
+	folderID := resolveE2EFolderID(t, client)
+	ensureE2ECapacity(t, client, 10)
+
+	ctx := context.Background()
+	profileName := "mlx-go-sdk-workflow-" + time.Now().UTC().Format("20060102-150405")
+	createResp, _, err := client.Profiles.Create(ctx, newE2ECreateProfileRequest(profileName, folderID))
+	if err != nil {
+		t.Fatalf("Profiles.Create returned error: %v", err)
+	}
+	if len(createResp.Data.IDs) == 0 {
+		t.Fatalf("Profiles.Create returned no ids")
+	}
+	profileID := createResp.Data.IDs[0]
+	archiveRoot := t.TempDir()
+
+	defer func() {
+		_, _, _ = client.Launcher.Stop(ctx, profileID)
+		_, _, _ = client.Profiles.Delete(ctx, &DeleteProfilesRequest{IDs: []string{profileID}, Permanently: true})
+	}()
+
+	startResult, err := client.Workflows.StartProfileByName(ctx, profileName, StartProfileByNameOptions{
+		FindOptions:    &FindProfileOptions{StorageType: "all", FolderID: folderID},
+		StartOptions:   StartProfileOptions{AutomationType: AutomationPlaywright},
+		WaitForRunning: true,
+	})
+	if err != nil {
+		t.Fatalf("Workflows.StartProfileByName returned error: %v", err)
+	}
+	if startResult.Profile.ID != profileID {
+		t.Fatalf("expected started workflow profile id %s, got %s", profileID, startResult.Profile.ID)
+	}
+	if startResult.RuntimeStatus == nil || startResult.RuntimeStatus.Data.Status == "" {
+		t.Fatalf("expected runtime status from workflow, got %#v", startResult.RuntimeStatus)
+	}
+
+	exportResult, err := client.Workflows.ExportProfileByNameToFolder(ctx, profileName, ExportProfileByNameToFolderOptions{
+		FindOptions: &FindProfileOptions{StorageType: "all", FolderID: folderID},
+		ExportOptions: ExportProfileToFolderOptions{
+			RootDir:      archiveRoot,
+			FolderName:   "Workflow Export",
+			ProfileName:  profileName,
+			WaitTimeout:  2 * time.Minute,
+			PollInterval: 2 * time.Second,
+		},
+		StopBeforeExport: true,
+	})
+	if err != nil {
+		t.Fatalf("Workflows.ExportProfileByNameToFolder returned error: %v", err)
+	}
+	if exportResult.Profile.ID != profileID {
+		t.Fatalf("expected exported workflow profile id %s, got %s", profileID, exportResult.Profile.ID)
+	}
+	if exportResult.Export == nil || exportResult.Export.Archive == nil {
+		t.Fatalf("expected managed export result, got %#v", exportResult.Export)
+	}
+	if _, err := os.Stat(exportResult.Export.Archive.ArchivePath); err != nil {
+		t.Fatalf("expected exported archive on disk, got %v", err)
+	}
+
+	stopResult, err := client.Workflows.StopProfileByName(ctx, profileName, StopProfileByNameOptions{
+		FindOptions:          &FindProfileOptions{StorageType: "all", FolderID: folderID},
+		IgnoreAlreadyStopped: true,
+	})
+	if err != nil {
+		t.Fatalf("Workflows.StopProfileByName returned error: %v", err)
+	}
+	if stopResult.Profile.ID != profileID {
+		t.Fatalf("expected stopped workflow profile id %s, got %s", profileID, stopResult.Profile.ID)
+	}
+
+	t.Logf("workflow helpers ok: profile=%s runtime_status=%s archive=%s", profileID, startResult.RuntimeStatus.Data.Status, exportResult.Export.Archive.ArchivePath)
+}
+
+func preflightE2EError() error {
+	client, err := NewFromEnv(WithTimeout(30 * time.Second))
+	if err != nil {
+		return err
+	}
+	_, _, err = client.Folders.List(context.Background())
+	return err
+}
+
+func skipForRateLimit(t *testing.T) bool {
+	t.Helper()
+	return isRateLimited(t, preflightE2EError())
+}
+
+func isRateLimited(t *testing.T, err error) bool {
+	t.Helper()
+	if err == nil {
+		return false
+	}
+	var apiErr *ErrorResponse
+	if errors.As(err, &apiErr) && apiErr != nil && apiErr.Response != nil && apiErr.Response.StatusCode == 429 {
+		t.Skipf("E2E skipped due to MLX API rate limit: %v", err)
+		return true
+	}
+	return false
 }
 
 func newE2ECreateProfileRequest(profileName, folderID string) *CreateProfileRequest {

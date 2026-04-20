@@ -20,6 +20,7 @@ type Client struct {
 	Transfers TransfersService
 	Archives  ArchiveManager
 	Cookies   CookiesService
+	Workflows WorkflowService
 }
 
 type stringableURL interface {
@@ -65,6 +66,7 @@ func New(opts ...Option) (*Client, error) {
 	c.Transfers = &TransfersServiceOp{client: c}
 	c.Archives = &ArchiveManagerOp{client: c}
 	c.Cookies = &CookiesServiceOp{client: c}
+	c.Workflows = &WorkflowServiceOp{client: c}
 
 	return c, nil
 }
