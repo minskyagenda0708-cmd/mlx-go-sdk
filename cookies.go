@@ -373,23 +373,12 @@ func (s *CookiesServiceOp) SeedProfileCookies(ctx context.Context, opts SeedProf
 }
 
 func (s *CookiesServiceOp) resolveFolderID(ctx context.Context, profileID string) (string, error) {
-	resp, _, err := s.client.Profiles.Search(ctx, &SearchProfilesRequest{
-		IsRemoved:   false,
-		Limit:       100,
-		Offset:      0,
-		SearchText:  "",
-		StorageType: "all",
-	})
+	meta, _, err := s.client.Profiles.GetMeta(ctx, profileID)
 	if err != nil {
 		return "", err
 	}
-	for _, profile := range resp.Data.Profiles {
-		if profile.ID == profileID {
-			if profile.FolderID == "" {
-				return "", NewArgError("folderID", "resolved profile has empty folder id")
-			}
-			return profile.FolderID, nil
-		}
+	if meta.FolderID == "" {
+		return "", NewArgError("folderID", "resolved profile has empty folder id")
 	}
-	return "", NewArgError("profileID", "profile was not found while resolving folder id")
+	return meta.FolderID, nil
 }

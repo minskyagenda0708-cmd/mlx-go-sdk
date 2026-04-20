@@ -130,6 +130,8 @@ client, err := mlx.NewFromEnv()
 
 profileIDs, _, err := client.Profiles.Create(ctx, req)
 profiles, _, err := client.Profiles.Search(ctx, searchReq)
+profile, _, err := client.Profiles.FindByName(ctx, "Demo", &mlx.FindProfileOptions{StorageType: "all"})
+meta, _, err := client.Profiles.GetMeta(ctx, profile.ID)
 _, err = client.Profiles.Delete(ctx, mlx.DeleteProfilesRequest{IDs: ids, Permanently: false})
 
 started, _, err := client.Launcher.Start(ctx, folderID, profileID, mlx.StartProfileOptions{Automation: mlx.AutomationRod})
@@ -168,3 +170,4 @@ _, _, err = client.Cookies.CreateMetadata(ctx, &mlx.CreateCookiesMetadataRequest
 - That filesystem orchestration layer should organize parent folders only and must **never rename the exported `.zip` file itself**.
 - Live API note: when using export results as import input, normalize extensionless `export_path` values to the corresponding `.zip` archive path.
 - Current checked-in docs/Postman data expose `/api/v1/version`, but no dedicated launcher `/health` endpoint was found; the SDK should use `Launcher.Health` as a readiness probe backed by `Version`.
+- Profile lookup convenience helpers should be validated against live API responses because `search` payloads can differ from documentation in subtle ways such as required defaults, returned field coverage, and exact-match filtering behavior.

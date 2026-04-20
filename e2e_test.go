@@ -34,6 +34,56 @@ func TestE2ELauncherHealth(t *testing.T) {
 	t.Logf("launcher health ok: env=%s version=%s", resp.Data.Env, resp.Data.Version)
 }
 
+func TestE2EProfileLookupHelpers(t *testing.T) {
+	if os.Getenv(EnvRunE2E) != "1" {
+		t.Skipf("set %s=1 to run E2E tests", EnvRunE2E)
+	}
+
+	client, err := NewFromEnv(WithTimeout(60 * time.Second))
+	if err != nil {
+		t.Fatalf("NewFromEnv returned error: %v", err)
+	}
+
+	folderID := resolveE2EFolderID(t, client)
+	ensureE2ECapacity(t, client, 10)
+
+	profileName := "mlx-go-sdk-lookup-" + time.Now().UTC().Format("20060102-150405")
+	ctx := context.Background()
+	createResp, _, err := client.Profiles.Create(ctx, newE2ECreateProfileRequest(profileName, folderID))
+	if err != nil {
+		t.Fatalf("Profiles.Create returned error: %v", err)
+	}
+	if len(createResp.Data.IDs) == 0 {
+		t.Fatalf("Profiles.Create returned no ids")
+	}
+	profileID := createResp.Data.IDs[0]
+
+	defer func() {
+		_, _, _ = client.Profiles.Delete(ctx, &DeleteProfilesRequest{IDs: []string{profileID}, Permanently: true})
+	}()
+
+	found, _, err := client.Profiles.FindByName(ctx, profileName, &FindProfileOptions{FolderID: folderID, StorageType: "all"})
+	if err != nil {
+		t.Fatalf("Profiles.FindByName returned error: %v", err)
+	}
+	if found.ID != profileID {
+		t.Fatalf("expected found profile id %s, got %s", profileID, found.ID)
+	}
+
+	meta, _, err := client.Profiles.GetMeta(ctx, profileID)
+	if err != nil {
+		t.Fatalf("Profiles.GetMeta returned error: %v", err)
+	}
+	if meta.ID != profileID {
+		t.Fatalf("expected meta profile id %s, got %s", profileID, meta.ID)
+	}
+	if meta.FolderID != folderID {
+		t.Fatalf("expected meta folder id %s, got %s", folderID, meta.FolderID)
+	}
+
+	t.Logf("profile lookup helpers ok: profile=%s folder=%s status=%s", meta.ID, meta.FolderID, meta.Status)
+}
+
 func TestE2EProfileLifecycle(t *testing.T) {
 	if os.Getenv(EnvRunE2E) != "1" {
 		t.Skipf("set %s=1 to run E2E tests", EnvRunE2E)

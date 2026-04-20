@@ -212,8 +212,8 @@ func TestCookiesSeedProfileCookies(t *testing.T) {
 				t.Fatalf("expected resolved folder id in import body, got %s", text)
 			}
 			fmt.Fprint(w, `{"status":{"http_code":200,"message":"Cookies successfully imported"},"data":null}`)
-		case r.Method == http.MethodPost && r.URL.Path == "/profile/search":
-			fmt.Fprint(w, `{"status":{"http_code":200,"message":"Search profile successfully result"},"data":{"profiles":[{"id":"profile-1","name":"Demo","folder_id":"folder-1","browser_type":"mimic","os_type":"windows","core_version":137,"notes":"","created_by":"me@example.com","in_use_by":"","last_launched_by":"","is_local":false}],"total_count":1}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/profile/metas":
+			fmt.Fprint(w, `{"status":{"http_code":200,"message":""},"data":{"profiles":[{"id":"profile-1","name":"Demo","folder_id":"folder-1","browser_type":"mimic","core_version":137,"os_type":"windows","workspace_id":"ws-1","created_at":"2026-04-20T00:00:00Z","created_by":"me@example.com","last_update_at":"2026-04-20T00:00:00Z","last_updated_by":"me@example.com","status":"ready"}]}}`)
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}

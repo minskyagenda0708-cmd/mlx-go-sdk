@@ -11,6 +11,8 @@ var (
 	ErrNilContext         = errors.New("context must not be nil")
 	ErrInvalidBaseURL     = errors.New("invalid base url")
 	ErrInvalidLauncherURL = errors.New("invalid launcher url")
+	ErrProfileNotFound    = errors.New("profile not found")
+	ErrProfileAmbiguous   = errors.New("profile lookup matched multiple profiles")
 )
 
 // ArgError describes an invalid input argument.

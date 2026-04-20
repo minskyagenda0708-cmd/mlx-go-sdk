@@ -5,18 +5,21 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 // ProfilesService describes profile lifecycle operations.
 type ProfilesService interface {
 	Create(context.Context, *CreateProfileRequest) (*CreateProfileResponse, *Response, error)
 	Search(context.Context, *SearchProfilesRequest) (*SearchProfilesResponse, *Response, error)
+	FindByName(context.Context, string, *FindProfileOptions) (*Profile, *Response, error)
 	Update(context.Context, *UpdateProfileRequest) (*EmptyDataResponse, *Response, error)
 	Patch(context.Context, *PatchProfileRequest) (*EmptyDataResponse, *Response, error)
 	Delete(context.Context, *DeleteProfilesRequest) (*EmptyDataResponse, *Response, error)
 	Restore(context.Context, *RestoreProfilesRequest) (*EmptyDataResponse, *Response, error)
 	Clone(context.Context, *CloneProfileRequest) (*CreateProfileResponse, *Response, error)
 	Move(context.Context, *MoveProfilesRequest) (*EmptyDataResponse, *Response, error)
+	GetMeta(context.Context, string) (*ProfileMeta, *Response, error)
 	GetMetas(context.Context, *ProfileMetasRequest) (*ProfileMetasResponse, *Response, error)
 	GetSummary(context.Context, string) (*ProfileSummaryResponse, *Response, error)
 }
@@ -55,6 +58,17 @@ type SearchProfilesRequest struct {
 	Sort        string   `json:"sort,omitempty"`
 	CoreVersion int      `json:"core_version,omitempty"`
 	Tags        []string `json:"tags,omitempty"`
+}
+
+// FindProfileOptions narrows convenience profile lookups.
+type FindProfileOptions struct {
+	IsRemoved   bool
+	StorageType string
+	FolderID    string
+	BrowserType string
+	OSType      string
+	Limit       int
+	Tags        []string
 }
 
 // UpdateProfileRequest fully updates a profile.
@@ -377,6 +391,55 @@ func (s *ProfilesServiceOp) Search(ctx context.Context, reqBody *SearchProfilesR
 	return out, resp, err
 }
 
+func (s *ProfilesServiceOp) FindByName(ctx context.Context, profileName string, opts *FindProfileOptions) (*Profile, *Response, error) {
+	if strings.TrimSpace(profileName) == "" {
+		return nil, nil, NewArgError("profileName", "it must not be empty")
+	}
+	searchReq := &SearchProfilesRequest{
+		IsRemoved:   false,
+		Limit:       100,
+		Offset:      0,
+		SearchText:  profileName,
+		StorageType: "all",
+	}
+	if opts != nil {
+		searchReq.IsRemoved = opts.IsRemoved
+		if opts.StorageType != "" {
+			searchReq.StorageType = opts.StorageType
+		}
+		searchReq.FolderID = opts.FolderID
+		searchReq.BrowserType = opts.BrowserType
+		searchReq.OSType = opts.OSType
+		searchReq.Tags = opts.Tags
+		if opts.Limit > 0 {
+			searchReq.Limit = opts.Limit
+		}
+	}
+
+	resp, httpResp, err := s.Search(ctx, searchReq)
+	if err != nil {
+		return nil, httpResp, err
+	}
+
+	trimmedName := strings.TrimSpace(profileName)
+	matches := make([]Profile, 0, len(resp.Data.Profiles))
+	for _, profile := range resp.Data.Profiles {
+		if strings.EqualFold(strings.TrimSpace(profile.Name), trimmedName) {
+			matches = append(matches, profile)
+		}
+	}
+
+	if len(matches) == 0 {
+		return nil, httpResp, fmt.Errorf("%w: %s", ErrProfileNotFound, profileName)
+	}
+	if len(matches) > 1 {
+		return nil, httpResp, fmt.Errorf("%w: %q matched %d profiles", ErrProfileAmbiguous, profileName, len(matches))
+	}
+
+	match := matches[0]
+	return &match, httpResp, nil
+}
+
 func (s *ProfilesServiceOp) Update(ctx context.Context, reqBody *UpdateProfileRequest) (*EmptyDataResponse, *Response, error) {
 	if reqBody == nil {
 		return nil, nil, NewArgError("reqBody", "it must not be nil")
@@ -453,6 +516,21 @@ func (s *ProfilesServiceOp) Move(ctx context.Context, reqBody *MoveProfilesReque
 	out := new(EmptyDataResponse)
 	resp, err := s.client.do(req, out)
 	return out, resp, err
+}
+
+func (s *ProfilesServiceOp) GetMeta(ctx context.Context, profileID string) (*ProfileMeta, *Response, error) {
+	if strings.TrimSpace(profileID) == "" {
+		return nil, nil, NewArgError("profileID", "it must not be empty")
+	}
+	resp, httpResp, err := s.GetMetas(ctx, &ProfileMetasRequest{IDs: []string{profileID}})
+	if err != nil {
+		return nil, httpResp, err
+	}
+	if len(resp.Data.Profiles) == 0 {
+		return nil, httpResp, fmt.Errorf("%w: %s", ErrProfileNotFound, profileID)
+	}
+	meta := resp.Data.Profiles[0]
+	return &meta, httpResp, nil
 }
 
 func (s *ProfilesServiceOp) GetMetas(ctx context.Context, reqBody *ProfileMetasRequest) (*ProfileMetasResponse, *Response, error) {
