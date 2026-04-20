@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "mlx_go_sdk",
+  "project_id": "70d7d1d3-4332-4ab0-be40-e36473f61cc5"
+}
