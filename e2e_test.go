@@ -656,7 +656,7 @@ func TestE2EWorkflowHelpers(t *testing.T) {
 
 	ctx := context.Background()
 	profileName := "mlx-go-sdk-workflow-" + time.Now().UTC().Format("20060102-150405")
-	createResp, _, err := client.Profiles.Create(ctx, newE2ECreateProfileRequest(profileName, folderID))
+	createResp, _, err := client.Profiles.Create(ctx, newE2ELocalCreateProfileRequest(profileName, folderID))
 	if err != nil {
 		t.Fatalf("Profiles.Create returned error: %v", err)
 	}
@@ -672,7 +672,7 @@ func TestE2EWorkflowHelpers(t *testing.T) {
 	}()
 
 	startResult, err := client.Workflows.StartProfileByName(ctx, profileName, StartProfileByNameOptions{
-		FindOptions:    &FindProfileOptions{StorageType: "all", FolderID: folderID},
+		FindOptions:    &FindProfileOptions{FolderID: folderID},
 		StartOptions:   StartProfileOptions{AutomationType: AutomationPlaywright},
 		WaitForRunning: true,
 	})
@@ -687,7 +687,7 @@ func TestE2EWorkflowHelpers(t *testing.T) {
 	}
 
 	exportResult, err := client.Workflows.ExportProfileByNameToFolder(ctx, profileName, ExportProfileByNameToFolderOptions{
-		FindOptions: &FindProfileOptions{StorageType: "all", FolderID: folderID},
+		FindOptions: &FindProfileOptions{FolderID: folderID},
 		ExportOptions: ExportProfileToFolderOptions{
 			RootDir:      archiveRoot,
 			FolderName:   "Workflow Export",
@@ -711,7 +711,7 @@ func TestE2EWorkflowHelpers(t *testing.T) {
 	}
 
 	stopResult, err := client.Workflows.StopProfileByName(ctx, profileName, StopProfileByNameOptions{
-		FindOptions:          &FindProfileOptions{StorageType: "all", FolderID: folderID},
+		FindOptions:          &FindProfileOptions{FolderID: folderID},
 		IgnoreAlreadyStopped: true,
 	})
 	if err != nil {
@@ -722,6 +722,84 @@ func TestE2EWorkflowHelpers(t *testing.T) {
 	}
 
 	t.Logf("workflow helpers ok: profile=%s runtime_status=%s archive=%s", profileID, startResult.RuntimeStatus.Data.Status, exportResult.Export.Archive.ArchivePath)
+}
+
+func TestE2EResourceProfileTemplateLifecycle(t *testing.T) {
+	if os.Getenv(EnvRunE2E) != "1" {
+		t.Skipf("set %s=1 to run E2E tests", EnvRunE2E)
+	}
+	if skipForRateLimit(t) {
+		return
+	}
+
+	client, err := NewFromEnv(WithTimeout(60 * time.Second))
+	if err != nil {
+		t.Fatalf("NewFromEnv returned error: %v", err)
+	}
+
+	ctx := context.Background()
+	typesResp, _, err := client.Resources.ListTypes(ctx)
+	if err != nil {
+		t.Fatalf("Resources.ListTypes returned error: %v", err)
+	}
+	if len(typesResp.Data.Types) == 0 {
+		t.Fatal("expected resource types")
+	}
+
+	trashbin := false
+	listResp, _, err := client.Resources.ListProfileTemplates(ctx, &ListResourceMetasOptions{ObjectName: "Template", Limit: 20, Offset: 0, Trashbin: &trashbin})
+	if err != nil {
+		t.Fatalf("Resources.ListProfileTemplates returned error: %v", err)
+	}
+	if len(listResp.Data.Objects) == 0 {
+		t.Fatal("expected existing Template resource to be listed")
+	}
+
+	resourceID := listResp.Data.Objects[0].ID
+	metaResp, _, err := client.Resources.GetMeta(ctx, resourceID)
+	if err != nil {
+		t.Fatalf("Resources.GetMeta returned error: %v", err)
+	}
+	if metaResp.Data.ID != resourceID {
+		t.Fatalf("expected resource id %s, got %s", resourceID, metaResp.Data.ID)
+	}
+
+	usageResp, _, err := client.Resources.ObjectProfileUsages(ctx, resourceID)
+	if err != nil {
+		t.Fatalf("Resources.ObjectProfileUsages returned error: %v", err)
+	}
+	if usageResp == nil {
+		t.Fatal("expected usage response")
+	}
+
+	name := "mlx-go-sdk-resource-" + time.Now().UTC().Format("20060102-150405")
+	body := fmt.Sprintf(`{"name":"%s","mainParams":{"browser_type":"mimic","os_type":"windows","parameters":{"storage":{"is_local":true}}}}`, name)
+	created, _, err := client.Resources.CreateProfileTemplate(ctx, &CreateProfileTemplateRequest{
+		Name: name,
+		Body: body,
+		Meta: fmt.Sprintf(`{"name":"%s","source":"mlx-go-sdk-e2e"}`, name),
+	})
+	if err != nil {
+		t.Fatalf("Resources.CreateProfileTemplate returned error: %v", err)
+	}
+	if created.Data.MetaID == "" {
+		t.Fatal("expected created resource meta id")
+	}
+	createdID := created.Data.MetaID
+
+	defer func() {
+		_, _, _ = client.Resources.Delete(ctx, createdID, true)
+	}()
+
+	downloadResp, _, err := client.Resources.Download(ctx, createdID)
+	if err != nil {
+		t.Fatalf("Resources.Download returned error: %v", err)
+	}
+	if strings.TrimSpace(downloadResp.Path) == "" {
+		t.Fatal("expected downloaded path")
+	}
+
+	t.Logf("resources/template lifecycle ok: existing_template=%s created_template=%s downloaded=%s listed=%d usages=%d", resourceID, createdID, downloadResp.Path, len(listResp.Data.Objects), len(usageResp.Data))
 }
 
 func preflightE2EError() error {
@@ -778,6 +856,18 @@ func newE2ECreateProfileRequest(profileName, folderID string) *CreateProfileRequ
 			Fingerprint: &Fingerprint{},
 		},
 	}
+}
+
+func newE2ELocalCreateProfileRequest(profileName, folderID string) *CreateProfileRequest {
+	req := newE2ECreateProfileRequest(profileName, folderID)
+	if req.Parameters == nil {
+		req.Parameters = &ProfileParameters{}
+	}
+	if req.Parameters.Storage == nil {
+		req.Parameters.Storage = &Storage{}
+	}
+	req.Parameters.Storage.IsLocal = true
+	return req
 }
 
 func resolveE2EFolderID(t *testing.T, client *Client) string {

@@ -20,6 +20,7 @@ type Client struct {
 	Transfers TransfersService
 	Archives  ArchiveManager
 	Cookies   CookiesService
+	Resources ResourcesService
 	Workflows WorkflowService
 }
 
@@ -66,6 +67,7 @@ func New(opts ...Option) (*Client, error) {
 	c.Transfers = &TransfersServiceOp{client: c}
 	c.Archives = &ArchiveManagerOp{client: c}
 	c.Cookies = &CookiesServiceOp{client: c}
+	c.Resources = &ResourcesServiceOp{client: c}
 	c.Workflows = &WorkflowServiceOp{client: c}
 
 	return c, nil

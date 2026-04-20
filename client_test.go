@@ -19,7 +19,7 @@ func TestNewConfiguresServices(t *testing.T) {
 		t.Fatalf("New returned error: %v", err)
 	}
 
-	if client.Profiles == nil || client.Launcher == nil || client.Folders == nil || client.Transfers == nil || client.Archives == nil || client.Cookies == nil || client.Workflows == nil {
+	if client.Profiles == nil || client.Launcher == nil || client.Folders == nil || client.Transfers == nil || client.Archives == nil || client.Cookies == nil || client.Resources == nil || client.Workflows == nil {
 		t.Fatalf("expected all core services to be initialized")
 	}
 }

@@ -61,7 +61,7 @@ type ExportedProfileWorkflowResult struct {
 
 // StartProfileByName resolves a profile by exact name, starts it, and optionally waits for running status.
 func (s *WorkflowServiceOp) StartProfileByName(ctx context.Context, profileName string, opts StartProfileByNameOptions) (*StartedProfileWorkflowResult, error) {
-	profile, _, err := s.client.Profiles.FindByName(ctx, profileName, opts.FindOptions)
+	profile, _, err := s.client.Profiles.FindByName(ctx, profileName, workflowFindOptions(opts.FindOptions))
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +85,7 @@ func (s *WorkflowServiceOp) StartProfileByName(ctx context.Context, profileName 
 
 // StopProfileByName resolves a profile by exact name and stops it.
 func (s *WorkflowServiceOp) StopProfileByName(ctx context.Context, profileName string, opts StopProfileByNameOptions) (*StoppedProfileWorkflowResult, error) {
-	profile, _, err := s.client.Profiles.FindByName(ctx, profileName, opts.FindOptions)
+	profile, _, err := s.client.Profiles.FindByName(ctx, profileName, workflowFindOptions(opts.FindOptions))
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +104,7 @@ func (s *WorkflowServiceOp) StopProfileByName(ctx context.Context, profileName s
 
 // ExportProfileByNameToFolder resolves a profile by exact name and exports it into an organized folder.
 func (s *WorkflowServiceOp) ExportProfileByNameToFolder(ctx context.Context, profileName string, opts ExportProfileByNameToFolderOptions) (*ExportedProfileWorkflowResult, error) {
-	profile, _, err := s.client.Profiles.FindByName(ctx, profileName, opts.FindOptions)
+	profile, _, err := s.client.Profiles.FindByName(ctx, profileName, workflowFindOptions(opts.FindOptions))
 	if err != nil {
 		return nil, err
 	}
@@ -134,4 +134,15 @@ func isAlreadyStoppedError(err error) bool {
 		return strings.Contains(message, "already stopped")
 	}
 	return strings.Contains(strings.ToLower(err.Error()), "already stopped")
+}
+
+func workflowFindOptions(opts *FindProfileOptions) *FindProfileOptions {
+	if opts == nil {
+		return &FindProfileOptions{StorageType: "local"}
+	}
+	cloned := *opts
+	if cloned.StorageType == "" {
+		cloned.StorageType = "local"
+	}
+	return &cloned
 }
