@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,6 +69,63 @@ func TestArchiveManagerOrganizeUsesSeparateFolders(t *testing.T) {
 	}
 }
 
+func TestArchiveManagerOrganizeRejectsMissingZip(t *testing.T) {
+	manager := &ArchiveManagerOp{}
+	_, err := manager.OrganizeExport(filepath.Join(t.TempDir(), "missing.zip"), t.TempDir(), "demo")
+	if err == nil {
+		t.Fatal("expected missing zip error")
+	}
+}
+
+func TestArchiveManagerOrganizeRejectsDirectory(t *testing.T) {
+	rootDir := t.TempDir()
+	sourceDir := t.TempDir()
+
+	manager := &ArchiveManagerOp{}
+	_, err := manager.OrganizeExport(sourceDir, rootDir, "demo")
+	if err == nil {
+		t.Fatal("expected directory input error")
+	}
+}
+
+func TestArchiveManagerOrganizeRejectsNonZip(t *testing.T) {
+	rootDir := t.TempDir()
+	sourceDir := t.TempDir()
+	sourcePath := filepath.Join(sourceDir, "export-1.txt")
+	if err := os.WriteFile(sourcePath, []byte("not-zip"), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	manager := &ArchiveManagerOp{}
+	_, err := manager.OrganizeExport(sourcePath, rootDir, "demo")
+	if err == nil {
+		t.Fatal("expected non-zip input error")
+	}
+}
+
+func TestArchiveManagerOrganizeRejectsExistingDestination(t *testing.T) {
+	rootDir := t.TempDir()
+	sourceDir := t.TempDir()
+	sourcePath := filepath.Join(sourceDir, "export-1.zip")
+	if err := os.WriteFile(sourcePath, []byte("zip-bytes"), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	existingDir := filepath.Join(rootDir, "John Doe")
+	if err := os.MkdirAll(existingDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(existingDir, "export-1.zip"), []byte("existing"), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	manager := &ArchiveManagerOp{}
+	_, err := manager.OrganizeExport(sourcePath, rootDir, "John Doe")
+	if err == nil {
+		t.Fatal("expected archive exists error")
+	}
+}
+
 func TestArchiveManagerExportProfileToFolder(t *testing.T) {
 	workspace := t.TempDir()
 	exportSource := filepath.Join(workspace, "export-1.zip")
@@ -116,6 +174,79 @@ func TestArchiveManagerExportProfileToFolder(t *testing.T) {
 	}
 	if _, err := os.Stat(result.Archive.ArchivePath); err != nil {
 		t.Fatalf("expected archive zip to exist, got %v", err)
+	}
+}
+
+func TestArchiveManagerExportProfileToFolderNormalizesExtensionlessStatusPath(t *testing.T) {
+	workspace := t.TempDir()
+	exportSource := filepath.Join(workspace, "export-2.zip")
+	if err := os.WriteFile(exportSource, []byte("zip"), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	server, httpClient := testutil.NewServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/api/v1/profile/profile-2/export":
+			fmt.Fprintf(w, `{"status":{"http_code":200,"message":"Export in progress"},"data":{"export_id":"export-2","export_path":"%s","profile_id":"profile-2","status":"running","message":"","timestamp":1713552000000}}`, filepath.ToSlash(exportSource))
+		case r.Method == "GET" && r.URL.Path == "/api/v1/profile/exports/export-2/status":
+			fmt.Fprintf(w, `{"status":{"http_code":200,"message":""},"data":{"export_id":"export-2","export_path":"%s","profile_id":"profile-2","status":"done","message":"","timestamp":1713552000000}}`, strings.TrimSuffix(filepath.ToSlash(exportSource), ".zip"))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	client, err := New(
+		WithToken("test-token"),
+		WithHTTPClient(httpClient),
+		WithLauncherURL(server.URL),
+	)
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+
+	result, err := client.Archives.ExportProfileToFolder(context.Background(), "profile-2", ExportProfileToFolderOptions{
+		RootDir:      filepath.Join(workspace, "archives"),
+		ProfileName:  "Jane Doe",
+		WaitTimeout:  5 * time.Second,
+		PollInterval: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("ExportProfileToFolder returned error: %v", err)
+	}
+	if filepath.Ext(result.Archive.ArchivePath) != ".zip" {
+		t.Fatalf("expected normalized archive path to keep .zip, got %s", result.Archive.ArchivePath)
+	}
+}
+
+func TestArchiveManagerExportProfileToFolderTimesOut(t *testing.T) {
+	server, httpClient := testutil.NewServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/api/v1/profile/profile-timeout/export":
+			fmt.Fprint(w, `{"status":{"http_code":200,"message":"Export in progress"},"data":{"export_id":"export-timeout","export_path":"C:/exports/export-timeout.zip","profile_id":"profile-timeout","status":"running","message":"","timestamp":1713552000000}}`)
+		case r.Method == "GET" && r.URL.Path == "/api/v1/profile/exports/export-timeout/status":
+			fmt.Fprint(w, `{"status":{"http_code":200,"message":""},"data":{"export_id":"export-timeout","export_path":"C:/exports/export-timeout","profile_id":"profile-timeout","status":"running","message":"still-running","timestamp":1713552000000}}`)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	client, err := New(
+		WithToken("test-token"),
+		WithHTTPClient(httpClient),
+		WithLauncherURL(server.URL),
+	)
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+
+	_, err = client.Archives.ExportProfileToFolder(context.Background(), "profile-timeout", ExportProfileToFolderOptions{
+		RootDir:      t.TempDir(),
+		ProfileName:  "Timeout Demo",
+		WaitTimeout:  25 * time.Millisecond,
+		PollInterval: 5 * time.Millisecond,
+	})
+	if err == nil {
+		t.Fatal("expected timeout error")
 	}
 }
 

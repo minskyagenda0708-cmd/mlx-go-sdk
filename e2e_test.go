@@ -483,6 +483,61 @@ func TestE2EProfileCookieSeeding(t *testing.T) {
 	t.Logf("cookie seeding completed: profile=%s target=%s imported=%d exported_timestamp=%d", profileID, seedResult.TargetWebsite, seedResult.CookieCount, exportResp.Data.Timestamp)
 }
 
+func TestE2EArchiveManagerExportToFolder(t *testing.T) {
+	if os.Getenv(EnvRunE2E) != "1" {
+		t.Skipf("set %s=1 to run E2E tests", EnvRunE2E)
+	}
+
+	client, err := NewFromEnv(WithTimeout(60 * time.Second))
+	if err != nil {
+		t.Fatalf("NewFromEnv returned error: %v", err)
+	}
+
+	folderID := resolveE2EFolderID(t, client)
+	ensureE2ECapacity(t, client, 10)
+
+	ctx := context.Background()
+	profileName := "mlx-go-sdk-archive-" + time.Now().UTC().Format("20060102-150405")
+	createResp, _, err := client.Profiles.Create(ctx, newE2ECreateProfileRequest(profileName, folderID))
+	if err != nil {
+		t.Fatalf("Profiles.Create returned error: %v", err)
+	}
+	if len(createResp.Data.IDs) == 0 {
+		t.Fatalf("Profiles.Create returned no ids")
+	}
+	profileID := createResp.Data.IDs[0]
+	archiveRoot := t.TempDir()
+
+	defer func() {
+		_, _, _ = client.Profiles.Delete(ctx, &DeleteProfilesRequest{IDs: []string{profileID}, Permanently: true})
+	}()
+
+	result, err := client.Archives.ExportProfileToFolder(ctx, profileID, ExportProfileToFolderOptions{
+		RootDir:      archiveRoot,
+		FolderName:   "Archive / Demo",
+		ProfileName:  profileName,
+		WaitTimeout:  2 * time.Minute,
+		PollInterval: 2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("Archives.ExportProfileToFolder returned error: %v", err)
+	}
+	if result.Archive == nil || result.ExportJob == nil {
+		t.Fatalf("expected archive result and export job, got %#v", result)
+	}
+	if filepath.Ext(result.Archive.ArchivePath) != ".zip" {
+		t.Fatalf("expected exported archive path to end with .zip, got %s", result.Archive.ArchivePath)
+	}
+	if _, err := os.Stat(result.Archive.ArchivePath); err != nil {
+		t.Fatalf("expected organized archive on disk, got %v", err)
+	}
+	if strings.Contains(result.Archive.FolderName, "/") {
+		t.Fatalf("expected sanitized folder name, got %s", result.Archive.FolderName)
+	}
+
+	t.Logf("archive manager export ok: profile=%s export_id=%s archive_dir=%s archive_path=%s raw_export_path=%s", profileID, result.ExportJob.Data.ExportID, result.Archive.ArchiveDir, result.Archive.ArchivePath, result.ExportJob.Data.ExportPath)
+}
+
 func newE2ECreateProfileRequest(profileName, folderID string) *CreateProfileRequest {
 	return &CreateProfileRequest{
 		Name:        profileName,
