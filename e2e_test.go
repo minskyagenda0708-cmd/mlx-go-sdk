@@ -10,6 +10,30 @@ import (
 	"time"
 )
 
+func TestE2ELauncherHealth(t *testing.T) {
+	if os.Getenv(EnvRunE2E) != "1" {
+		t.Skipf("set %s=1 to run E2E tests", EnvRunE2E)
+	}
+
+	client, err := NewFromEnv(WithTimeout(30 * time.Second))
+	if err != nil {
+		t.Fatalf("NewFromEnv returned error: %v", err)
+	}
+
+	resp, _, err := client.Launcher.Health(context.Background())
+	if err != nil {
+		t.Fatalf("Launcher.Health returned error: %v", err)
+	}
+	if !resp.Data.Alive {
+		t.Fatal("expected launcher to be alive")
+	}
+	if strings.TrimSpace(resp.Data.Version) == "" {
+		t.Fatal("expected non-empty launcher version")
+	}
+
+	t.Logf("launcher health ok: env=%s version=%s", resp.Data.Env, resp.Data.Version)
+}
+
 func TestE2EProfileLifecycle(t *testing.T) {
 	if os.Getenv(EnvRunE2E) != "1" {
 		t.Skipf("set %s=1 to run E2E tests", EnvRunE2E)

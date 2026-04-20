@@ -22,6 +22,7 @@ type LauncherService interface {
 	Start(context.Context, string, string, StartProfileOptions) (*StartProfileResponse, *Response, error)
 	Stop(context.Context, string) (*EmptyDataResponse, *Response, error)
 	StopAll(context.Context, StopAllProfilesOptions) (*EmptyDataResponse, *Response, error)
+	Health(context.Context) (*LauncherHealthResponse, *Response, error)
 	Status(context.Context, string) (*ProfileRuntimeStatusResponse, *Response, error)
 	Statuses(context.Context) (*AllProfileStatusesResponse, *Response, error)
 	QuickStatuses(context.Context) (*QuickProfileStatusesResponse, *Response, error)
@@ -135,6 +136,25 @@ type LauncherVersionData struct {
 	Version string `json:"version"`
 }
 
+// LauncherHealthResponse reports whether the local launcher is reachable.
+//
+// Multilogin X does not currently expose a dedicated health endpoint in the
+// checked-in Postman collection, so this helper probes `/api/v1/version` as the
+// launcher liveness/readiness check.
+type LauncherHealthResponse struct {
+	Status Status             `json:"status"`
+	Data   LauncherHealthData `json:"data"`
+}
+
+func (r *LauncherHealthResponse) GetStatus() Status { return r.Status }
+
+// LauncherHealthData contains the launcher readiness state.
+type LauncherHealthData struct {
+	Alive   bool   `json:"alive"`
+	Env     string `json:"env,omitempty"`
+	Version string `json:"version,omitempty"`
+}
+
 func (s *LauncherServiceOp) Start(ctx context.Context, folderID, profileID string, opts StartProfileOptions) (*StartProfileResponse, *Response, error) {
 	if folderID == "" {
 		return nil, nil, NewArgError("folderID", "it must not be empty")
@@ -186,6 +206,26 @@ func (s *LauncherServiceOp) StopAll(ctx context.Context, opts StopAllProfilesOpt
 	out := new(EmptyDataResponse)
 	resp, err := s.client.do(req, out)
 	return out, resp, err
+}
+
+func (s *LauncherServiceOp) Health(ctx context.Context) (*LauncherHealthResponse, *Response, error) {
+	version, resp, err := s.Version(ctx)
+	if err != nil {
+		return nil, resp, err
+	}
+	out := &LauncherHealthResponse{
+		Status: version.Status,
+		Data: LauncherHealthData{
+			Alive:   true,
+			Env:     version.Data.Env,
+			Version: version.Data.Version,
+		},
+	}
+	if resp != nil {
+		resp.Status = out.Status
+		resp.Raw = out.Data
+	}
+	return out, resp, nil
 }
 
 func (s *LauncherServiceOp) Status(ctx context.Context, profileID string) (*ProfileRuntimeStatusResponse, *Response, error) {

@@ -71,6 +71,7 @@ The initial SDK should focus on browser profile lifecycle management for Go deve
 | yes | `GET` | `/api/v2/profile/f/:folder_id/p/:profile_id/start` | `Start` | core launcher integration |
 | yes | `GET` | `/api/v1/profile/stop/p/:profile_id` | `Stop` | core launcher integration |
 | yes | `GET` | `/api/v1/profile/stop_all` | `StopAll` | useful cleanup operation |
+| yes | `GET` | `/api/v1/version` | `Health` | launcher liveness/readiness probe exposed by the SDK via version lookup |
 | yes | `GET` | `/api/v1/profile/status/p/:profile_id` | `Status` | single profile runtime status |
 | yes | `GET` | `/api/v1/profile/statuses` | `Statuses` | inspect all running profiles |
 | yes | `GET` | `/api/v1/profile/quick/statuses` | `QuickStatuses` | useful when mixing quick profiles |
@@ -132,6 +133,7 @@ profiles, _, err := client.Profiles.Search(ctx, searchReq)
 _, err = client.Profiles.Delete(ctx, mlx.DeleteProfilesRequest{IDs: ids, Permanently: false})
 
 started, _, err := client.Launcher.Start(ctx, folderID, profileID, mlx.StartProfileOptions{Automation: mlx.AutomationRod})
+health, _, err := client.Launcher.Health(ctx)
 status, _, err := client.Launcher.Status(ctx, profileID)
 _, err = client.Launcher.Stop(ctx, profileID)
 
@@ -165,3 +167,4 @@ _, _, err = client.Cookies.CreateMetadata(ctx, &mlx.CreateCookiesMetadataRequest
 - If one-profile-per-folder archival is required, the SDK will likely need a post-export filesystem orchestration layer outside the current launcher API request surface.
 - That filesystem orchestration layer should organize parent folders only and must **never rename the exported `.zip` file itself**.
 - Live API note: when using export results as import input, normalize extensionless `export_path` values to the corresponding `.zip` archive path.
+- Current checked-in docs/Postman data expose `/api/v1/version`, but no dedicated launcher `/health` endpoint was found; the SDK should use `Launcher.Health` as a readiness probe backed by `Version`.
