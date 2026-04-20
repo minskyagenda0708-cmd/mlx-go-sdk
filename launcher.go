@@ -81,9 +81,12 @@ type ProfileRuntimeStatus struct {
 	FolderID       string `json:"folder_id"`
 	WorkspaceID    string `json:"workspace_id"`
 	InUseBy        string `json:"in_use_by"`
+	LastLaunchedAt string `json:"last_launched_at"`
 	LastLaunchedBy string `json:"last_launched_by"`
+	LastLaunchedOn string `json:"last_launched_on"`
 	Message        string `json:"message"`
 	IsQuick        bool   `json:"is_quick"`
+	Timestamp      int64  `json:"timestamp"`
 }
 
 // AllProfileStatusesResponse contains all profile runtime states.
@@ -96,7 +99,15 @@ func (r *AllProfileStatusesResponse) GetStatus() Status { return r.Status }
 
 // AllProfileStatusesData wraps all launcher states.
 type AllProfileStatusesData struct {
-	States map[string]ProfileRuntimeStatus `json:"states"`
+	ActiveCounter LauncherActiveCounter          `json:"active_counter"`
+	States        map[string]ProfileRuntimeStatus `json:"states"`
+}
+
+// LauncherActiveCounter reports running profile counts by storage type.
+type LauncherActiveCounter struct {
+	Cloud int `json:"cloud"`
+	Local int `json:"local"`
+	Quick int `json:"quick"`
 }
 
 // QuickProfileStatusesResponse contains quick profile states.
@@ -109,7 +120,7 @@ func (r *QuickProfileStatusesResponse) GetStatus() Status { return r.Status }
 
 // QuickProfileStatusesData wraps quick profile states.
 type QuickProfileStatusesData struct {
-	ActiveCounter any                                  `json:"active_counter"`
+	ActiveCounter int                                  `json:"active_counter"`
 	States        map[string]QuickProfileRuntimeStatus `json:"states"`
 }
 
@@ -120,6 +131,7 @@ type QuickProfileRuntimeStatus struct {
 	Message     string `json:"message"`
 	BrowserType string `json:"browser_type"`
 	IsQuick     bool   `json:"is_quick"`
+	Timestamp   int64  `json:"timestamp"`
 }
 
 // LauncherVersionResponse returns launcher version info.

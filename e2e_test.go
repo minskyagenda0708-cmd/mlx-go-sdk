@@ -84,6 +84,87 @@ func TestE2EProfileLookupHelpers(t *testing.T) {
 	t.Logf("profile lookup helpers ok: profile=%s folder=%s status=%s", meta.ID, meta.FolderID, meta.Status)
 }
 
+func TestE2ETypedLauncherModels(t *testing.T) {
+	if os.Getenv(EnvRunE2E) != "1" {
+		t.Skipf("set %s=1 to run E2E tests", EnvRunE2E)
+	}
+
+	client, err := NewFromEnv(WithTimeout(60 * time.Second))
+	if err != nil {
+		t.Fatalf("NewFromEnv returned error: %v", err)
+	}
+
+	folderID := resolveE2EFolderID(t, client)
+	ensureE2ECapacity(t, client, 10)
+
+	profileName := "mlx-go-sdk-typed-" + time.Now().UTC().Format("20060102-150405")
+	ctx := context.Background()
+	createResp, _, err := client.Profiles.Create(ctx, newE2ECreateProfileRequest(profileName, folderID))
+	if err != nil {
+		t.Fatalf("Profiles.Create returned error: %v", err)
+	}
+	if len(createResp.Data.IDs) == 0 {
+		t.Fatalf("Profiles.Create returned no ids")
+	}
+	profileID := createResp.Data.IDs[0]
+
+	defer func() {
+		_, _, _ = client.Launcher.Stop(ctx, profileID)
+		_, _, _ = client.Profiles.Delete(ctx, &DeleteProfilesRequest{IDs: []string{profileID}, Permanently: true})
+	}()
+
+	_, _, err = client.Launcher.Start(ctx, folderID, profileID, StartProfileOptions{})
+	if err != nil {
+		t.Fatalf("Launcher.Start returned error: %v", err)
+	}
+
+	status := waitForRunningStatus(t, client, profileID)
+	if status.Data.Timestamp <= 0 {
+		t.Fatalf("expected runtime status timestamp, got %d", status.Data.Timestamp)
+	}
+
+	statuses, _, err := client.Launcher.Statuses(ctx)
+	if err != nil {
+		t.Fatalf("Launcher.Statuses returned error: %v", err)
+	}
+	state, ok := statuses.Data.States[profileID]
+	if !ok {
+		t.Fatalf("expected launched profile %s in launcher states", profileID)
+	}
+	if state.Timestamp <= 0 {
+		t.Fatalf("expected launcher states timestamp, got %d", state.Timestamp)
+	}
+	if statuses.Data.ActiveCounter.Cloud+statuses.Data.ActiveCounter.Local+statuses.Data.ActiveCounter.Quick <= 0 {
+		t.Fatalf("expected non-zero active counter, got %#v", statuses.Data.ActiveCounter)
+	}
+
+	quickStatuses, _, err := client.Launcher.QuickStatuses(ctx)
+	if err != nil {
+		t.Fatalf("Launcher.QuickStatuses returned error: %v", err)
+	}
+
+	searchResp, _, err := client.Profiles.Search(ctx, &SearchProfilesRequest{
+		IsRemoved:   false,
+		Limit:       100,
+		Offset:      0,
+		SearchText:  profileName,
+		StorageType: "all",
+	})
+	if err != nil {
+		t.Fatalf("Profiles.Search returned error: %v", err)
+	}
+	if len(searchResp.Data.Profiles) == 0 {
+		t.Fatalf("expected created profile in search results")
+	}
+
+	meta, _, err := client.Profiles.GetMeta(ctx, profileID)
+	if err != nil {
+		t.Fatalf("Profiles.GetMeta returned error: %v", err)
+	}
+
+	t.Logf("typed launcher models ok: profile=%s runtime_timestamp=%d active_counter=%#v quick_active=%d search_last_on=%q meta_last_on=%q", profileID, state.Timestamp, statuses.Data.ActiveCounter, quickStatuses.Data.ActiveCounter, searchResp.Data.Profiles[0].LastLaunchedOn, meta.LastLaunchedOn)
+}
+
 func TestE2EProfileLifecycle(t *testing.T) {
 	if os.Getenv(EnvRunE2E) != "1" {
 		t.Skipf("set %s=1 to run E2E tests", EnvRunE2E)

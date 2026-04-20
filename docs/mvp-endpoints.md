@@ -171,3 +171,4 @@ _, _, err = client.Cookies.CreateMetadata(ctx, &mlx.CreateCookiesMetadataRequest
 - Live API note: when using export results as import input, normalize extensionless `export_path` values to the corresponding `.zip` archive path.
 - Current checked-in docs/Postman data expose `/api/v1/version`, but no dedicated launcher `/health` endpoint was found; the SDK should use `Launcher.Health` as a readiness probe backed by `Version`.
 - Profile lookup convenience helpers should be validated against live API responses because `search` payloads can differ from documentation in subtle ways such as required defaults, returned field coverage, and exact-match filtering behavior.
+- Launcher status payloads expose additional typed fields in practice, including `last_launched_at`, `last_launched_on`, and `timestamp`, while `/api/v1/profile/statuses` returns a structured `active_counter` object and `/api/v1/profile/quick/statuses` returns a numeric quick-profile counter.

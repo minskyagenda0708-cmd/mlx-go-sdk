@@ -293,6 +293,7 @@ type Profile struct {
 	ID                string `json:"id"`
 	Name              string `json:"name"`
 	FolderID          string `json:"folder_id"`
+	ABPStatus         bool   `json:"abp_status"`
 	BrowserType       string `json:"browser_type"`
 	OSType            string `json:"os_type"`
 	CoreVersion       int    `json:"core_version"`
@@ -303,6 +304,7 @@ type Profile struct {
 	LockedBy          string `json:"locked_by"`
 	LastLaunchedAt    string `json:"last_launched_at"`
 	LastLaunchedBy    string `json:"last_launched_by"`
+	LastLaunchedOn    string `json:"last_launched_on"`
 	UpdatedAt         string `json:"updated_at"`
 	PasswordProtected bool   `json:"password_protected"`
 	IsLocal           bool   `json:"is_local"`
@@ -329,15 +331,20 @@ type ProfileMeta struct {
 	BrowserType    string             `json:"browser_type"`
 	CoreVersion    int                `json:"core_version"`
 	IsAutoUpdate   bool               `json:"is_auto_update"`
+	IsLocal        bool               `json:"is_local"`
 	OSType         string             `json:"os_type"`
 	FolderID       string             `json:"folder_id"`
 	WorkspaceID    string             `json:"workspace_id"`
 	CreatedAt      string             `json:"created_at"`
 	CreatedBy      string             `json:"created_by"`
+	InUseBy        string             `json:"in_use_by"`
 	LastLaunchedAt string             `json:"last_launched_at"`
 	LastLaunchedBy string             `json:"last_launched_by"`
+	LastLaunchedOn string             `json:"last_launched_on"`
 	LastUpdatedAt  string             `json:"last_update_at"`
 	LastUpdatedBy  string             `json:"last_updated_by"`
+	RemovedAt      string             `json:"removed_at"`
+	RemovedBy      string             `json:"removed_by"`
 	Status         string             `json:"status"`
 	Parameters     *ProfileParameters `json:"parameters,omitempty"`
 }

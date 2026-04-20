@@ -91,3 +91,71 @@ func TestLauncherHealth(t *testing.T) {
 		t.Fatalf("unexpected env: %s", resp.Data.Env)
 	}
 }
+
+func TestLauncherStatuses(t *testing.T) {
+	server, httpClient := testutil.NewServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("expected GET, got %s", r.Method)
+		}
+		if r.URL.Path != "/api/v1/profile/statuses" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		fmt.Fprint(w, `{"status":{"http_code":200,"message":""},"data":{"active_counter":{"cloud":2,"local":0,"quick":1},"states":{"profile-1":{"browser_type":"mimic","core_version":137,"folder_id":"folder-1","in_use_by":"","is_quick":false,"last_launched_at":"2026-04-20T00:00:00Z","last_launched_by":"marvin@example.com","last_launched_on":"localhost","message":"","name":"Demo","profile_id":"profile-1","status":"browser_running","timestamp":1745100000000,"workspace_id":"workspace-1"}}}}`)
+	})
+
+	client, err := New(
+		WithToken("test-token"),
+		WithHTTPClient(httpClient),
+		WithLauncherURL(server.URL),
+	)
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+
+	resp, _, err := client.Launcher.Statuses(context.Background())
+	if err != nil {
+		t.Fatalf("Launcher.Statuses returned error: %v", err)
+	}
+	if resp.Data.ActiveCounter.Cloud != 2 || resp.Data.ActiveCounter.Quick != 1 {
+		t.Fatalf("unexpected active counter: %#v", resp.Data.ActiveCounter)
+	}
+	state := resp.Data.States["profile-1"]
+	if state.LastLaunchedOn != "localhost" {
+		t.Fatalf("unexpected last launched on: %s", state.LastLaunchedOn)
+	}
+	if state.Timestamp != 1745100000000 {
+		t.Fatalf("unexpected timestamp: %d", state.Timestamp)
+	}
+}
+
+func TestLauncherQuickStatuses(t *testing.T) {
+	server, httpClient := testutil.NewServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("expected GET, got %s", r.Method)
+		}
+		if r.URL.Path != "/api/v1/profile/quick/statuses" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		fmt.Fprint(w, `{"status":{"http_code":200,"message":""},"data":{"active_counter":1,"states":{"quick-1":{"browser_type":"mimic","is_quick":true,"message":"57165","name":"test","status":"browser_running","timestamp":1744706373229}}}}`)
+	})
+
+	client, err := New(
+		WithToken("test-token"),
+		WithHTTPClient(httpClient),
+		WithLauncherURL(server.URL),
+	)
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+
+	resp, _, err := client.Launcher.QuickStatuses(context.Background())
+	if err != nil {
+		t.Fatalf("Launcher.QuickStatuses returned error: %v", err)
+	}
+	if resp.Data.ActiveCounter != 1 {
+		t.Fatalf("unexpected active counter: %d", resp.Data.ActiveCounter)
+	}
+	if resp.Data.States["quick-1"].Timestamp != 1744706373229 {
+		t.Fatalf("unexpected timestamp: %d", resp.Data.States["quick-1"].Timestamp)
+	}
+}
