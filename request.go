@@ -63,3 +63,7 @@ func (c *Client) newLauncherRequest(ctx context.Context, method, path string, bo
 func (c *Client) newCookiesRequest(ctx context.Context, method, path string, body any) (*http.Request, error) {
 	return c.newRequest(ctx, method, c.cookiesURL, path, body)
 }
+
+func (c *Client) newProxyRequest(ctx context.Context, method, path string, body any) (*http.Request, error) {
+	return c.newRequest(ctx, method, c.proxyURL, path, body)
+}

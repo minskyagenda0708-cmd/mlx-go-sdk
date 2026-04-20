@@ -7,6 +7,7 @@ func TestNewFromEnvUsesURLOverrides(t *testing.T) {
 	t.Setenv(EnvBaseURL, "https://api.example.test")
 	t.Setenv(EnvLauncherURL, "https://launcher.example.test:45001")
 	t.Setenv(EnvCookiesURL, "https://cookies.example.test")
+	t.Setenv(EnvProxyURL, "https://proxy.example.test")
 
 	client, err := NewFromEnv()
 	if err != nil {
@@ -21,5 +22,8 @@ func TestNewFromEnvUsesURLOverrides(t *testing.T) {
 	}
 	if got := client.cookiesURL.String(); got != "https://cookies.example.test/" {
 		t.Fatalf("unexpected cookies url: %s", got)
+	}
+	if got := client.proxyURL.String(); got != "https://proxy.example.test/" {
+		t.Fatalf("unexpected proxy url: %s", got)
 	}
 }

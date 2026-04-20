@@ -11,11 +11,13 @@ type Client struct {
 	baseURL     stringableURL
 	launcherURL stringableURL
 	cookiesURL  stringableURL
+	proxyURL    stringableURL
 	token       string
 	userAgent   string
 
 	Profiles  ProfilesService
 	Launcher  LauncherService
+	Proxies   ProxyService
 	Folders   FoldersService
 	Transfers TransfersService
 	Archives  ArchiveManager
@@ -42,12 +44,17 @@ func New(opts ...Option) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	proxyURL, err := parseBaseURL(defaultProxyURL)
+	if err != nil {
+		return nil, err
+	}
 
 	c := &Client{
 		httpClient:  &http.Client{},
 		baseURL:     baseURL,
 		launcherURL: launcherURL,
 		cookiesURL:  cookiesURL,
+		proxyURL:    proxyURL,
 		userAgent:   defaultUserAgent,
 	}
 
@@ -63,6 +70,7 @@ func New(opts ...Option) (*Client, error) {
 
 	c.Profiles = &ProfilesServiceOp{client: c}
 	c.Launcher = &LauncherServiceOp{client: c}
+	c.Proxies = &ProxyServiceOp{client: c}
 	c.Folders = &FoldersServiceOp{client: c}
 	c.Transfers = &TransfersServiceOp{client: c}
 	c.Archives = &ArchiveManagerOp{client: c}
@@ -80,6 +88,7 @@ func NewFromEnv(opts ...Option) (*Client, error) {
 		WithBaseURL(envOrDefault(EnvBaseURL, defaultBaseURL)),
 		WithLauncherURL(envOrDefault(EnvLauncherURL, defaultLauncherURL)),
 		WithCookiesURL(envOrDefault(EnvCookiesURL, defaultCookiesURL)),
+		WithProxyURL(envOrDefault(EnvProxyURL, defaultProxyURL)),
 	}
 	opts = append(defaults, opts...)
 	return New(opts...)

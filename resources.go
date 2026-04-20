@@ -2,6 +2,7 @@ package mlx
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -23,13 +24,22 @@ type ResourcesService interface {
 	ListTypes(context.Context) (*ResourceTypesResponse, *Response, error)
 	ListMetas(context.Context, *ListResourceMetasOptions) (*ResourceMetasResponse, *Response, error)
 	ListProfileTemplates(context.Context, *ListResourceMetasOptions) (*ResourceMetasResponse, *Response, error)
+	ListExtensions(context.Context, *ListResourceMetasOptions) (*ResourceMetasResponse, *Response, error)
 	GetMeta(context.Context, string) (*ResourceMetaResponse, *Response, error)
 	Delete(context.Context, string, bool) (*EmptyDataResponse, *Response, error)
 	Restore(context.Context, string) (*EmptyDataResponse, *Response, error)
 	ObjectProfileUsages(context.Context, string) (*ObjectProfileUsagesResponse, *Response, error)
 	ProfileObjectUsages(context.Context, *ProfileObjectUsagesRequest) (*ProfileObjectUsagesResponse, *Response, error)
+	ProfileExtensionUsages(context.Context, string) (*ProfileObjectUsagesResponse, *Response, error)
+	Upload(context.Context, *UploadObjectRequest) (*CreateAndUploadObjectResponse, *Response, error)
 	CreateAndUpload(context.Context, *CreateAndUploadObjectRequest) (*CreateAndUploadObjectResponse, *Response, error)
 	CreateProfileTemplate(context.Context, *CreateProfileTemplateRequest) (*CreateAndUploadObjectResponse, *Response, error)
+	UploadExtension(context.Context, *UploadExtensionRequest) (*CreateAndUploadObjectResponse, *Response, error)
+	LocalToCloud(context.Context, *LocalToCloudObjectRequest) (*CreateAndUploadObjectResponse, *Response, error)
+	CreateExtensionFromURL(context.Context, *CreateExtensionFromURLRequest) (*EmptyDataResponse, *Response, error)
+	CreateExtensionFromChromeWebStore(context.Context, *CreateChromeWebStoreExtensionRequest) (*EmptyDataResponse, *Response, error)
+	EnableExtensionForProfiles(context.Context, string, *SetResourceProfilesRequest) (*StringDataResponse, *Response, error)
+	DisableExtensionForProfiles(context.Context, string, *SetResourceProfilesRequest) (*StringDataResponse, *Response, error)
 	Download(context.Context, string) (*DownloadResourceResponse, *Response, error)
 }
 
@@ -140,11 +150,20 @@ func (r *ProfileObjectUsagesResponse) GetStatus() Status { return r.Status }
 
 // ProfileObjectUsage describes one object associated with a profile.
 type ProfileObjectUsage struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Type      string `json:"type"`
-	MetaInfo  string `json:"meta_info"`
-	IsEnabled bool   `json:"is_enabled"`
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Type      string          `json:"type"`
+	MetaInfo  json.RawMessage `json:"meta_info"`
+	IsEnabled bool            `json:"is_enabled"`
+}
+
+// UploadObjectRequest uploads an existing local object into launcher-backed storage.
+type UploadObjectRequest struct {
+	ObjectTypeID string `json:"object_type_id"`
+	ObjectPath   string `json:"object_path"`
+	StorageType  string `json:"storage_type"`
+	ObjectMeta   string `json:"object_meta,omitempty"`
+	Encrypt      *bool  `json:"encrypt,omitempty"`
 }
 
 // CreateAndUploadObjectRequest creates a new launcher-backed object from body content.
@@ -178,6 +197,54 @@ type CreateProfileTemplateRequest struct {
 	Meta      string
 	Encrypt   *bool
 }
+
+// UploadExtensionRequest uploads an extension archive as a resource object.
+//
+// Live validation showed that applying a local zip extension to a local profile
+// works reliably when the extension object reference is cloud-backed, so this
+// helper defaults StorageType to "cloud".
+type UploadExtensionRequest struct {
+	ObjectPath  string
+	StorageType string
+	ObjectMeta  string
+	Encrypt     *bool
+}
+
+// LocalToCloudObjectRequest promotes a local object into cloud storage.
+type LocalToCloudObjectRequest struct {
+	ObjectPath string `json:"object_path"`
+	ObjectID   string `json:"object_id,omitempty"`
+}
+
+// CreateExtensionFromURLRequest materializes an extension object from a downloadable URL.
+//
+// StorageType defaults to "cloud" because cloud-backed extension references are
+// the safest choice for both cloud and local profiles.
+type CreateExtensionFromURLRequest struct {
+	URL         string `json:"url"`
+	BrowserType string `json:"browser_type"`
+	StorageType string `json:"storage_type"`
+}
+
+// CreateChromeWebStoreExtensionRequest creates an extension from a Chrome Web Store ID.
+type CreateChromeWebStoreExtensionRequest struct {
+	ExtensionID string
+	BrowserType string
+	StorageType string
+}
+
+// SetResourceProfilesRequest enables or disables a resource for a set of profiles.
+type SetResourceProfilesRequest struct {
+	ProfileIDs []string `json:"profile_ids"`
+}
+
+// StringDataResponse captures endpoints that return a simple string payload.
+type StringDataResponse struct {
+	Status Status `json:"status"`
+	Data   string `json:"data"`
+}
+
+func (r *StringDataResponse) GetStatus() Status { return r.Status }
 
 // DownloadResourceResponse contains the downloaded path materialized by the launcher.
 type DownloadResourceResponse struct {
@@ -260,6 +327,15 @@ func (s *ResourcesServiceOp) ListProfileTemplates(ctx context.Context, opts *Lis
 	return s.ListMetas(ctx, cloned)
 }
 
+func (s *ResourcesServiceOp) ListExtensions(ctx context.Context, opts *ListResourceMetasOptions) (*ResourceMetasResponse, *Response, error) {
+	cloned := &ListResourceMetasOptions{ObjectTypeID: ResourceTypeExtensions}
+	if opts != nil {
+		*cloned = *opts
+		cloned.ObjectTypeID = ResourceTypeExtensions
+	}
+	return s.ListMetas(ctx, cloned)
+}
+
 func (s *ResourcesServiceOp) GetMeta(ctx context.Context, resourceID string) (*ResourceMetaResponse, *Response, error) {
 	if strings.TrimSpace(resourceID) == "" {
 		return nil, nil, NewArgError("resourceID", "it must not be empty")
@@ -329,6 +405,47 @@ func (s *ResourcesServiceOp) ProfileObjectUsages(ctx context.Context, reqBody *P
 	return out, resp, err
 }
 
+func (s *ResourcesServiceOp) ProfileExtensionUsages(ctx context.Context, profileID string) (*ProfileObjectUsagesResponse, *Response, error) {
+	if strings.TrimSpace(profileID) == "" {
+		return nil, nil, NewArgError("profileID", "it must not be empty")
+	}
+	/*
+		Live MLX validation showed that `/api/v1/resources/profile_object_usages` can be
+		unreliable for extension lookups even when the extension is actually attached to a
+		local profile: the endpoint returned `501` while the inverse lookup via
+		`ObjectProfileUsages` and launcher behavior still confirmed the binding.
+
+		Use this helper when the endpoint is available, but prefer object-centric checks or
+		other stronger signals in critical workflows.
+	*/
+	return s.ProfileObjectUsages(ctx, &ProfileObjectUsagesRequest{
+		ObjectType: ResourceTypeExtensions,
+		ProfileID:  profileID,
+	})
+}
+
+func (s *ResourcesServiceOp) Upload(ctx context.Context, reqBody *UploadObjectRequest) (*CreateAndUploadObjectResponse, *Response, error) {
+	if reqBody == nil {
+		return nil, nil, NewArgError("reqBody", "it must not be nil")
+	}
+	if strings.TrimSpace(reqBody.ObjectTypeID) == "" {
+		return nil, nil, NewArgError("objectTypeID", "it must not be empty")
+	}
+	if strings.TrimSpace(reqBody.ObjectPath) == "" {
+		return nil, nil, NewArgError("objectPath", "it must not be empty")
+	}
+	if strings.TrimSpace(reqBody.StorageType) == "" {
+		return nil, nil, NewArgError("storageType", "it must not be empty")
+	}
+	req, err := s.client.newLauncherRequest(ctx, http.MethodPost, "/api/v1/object_storage/upload", reqBody)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := new(CreateAndUploadObjectResponse)
+	resp, err := s.client.do(req, out)
+	return out, resp, err
+}
+
 func (s *ResourcesServiceOp) CreateAndUpload(ctx context.Context, reqBody *CreateAndUploadObjectRequest) (*CreateAndUploadObjectResponse, *Response, error) {
 	if reqBody == nil {
 		return nil, nil, NewArgError("reqBody", "it must not be nil")
@@ -360,6 +477,121 @@ func (s *ResourcesServiceOp) CreateProfileTemplate(ctx context.Context, reqBody 
 	})
 }
 
+func (s *ResourcesServiceOp) UploadExtension(ctx context.Context, reqBody *UploadExtensionRequest) (*CreateAndUploadObjectResponse, *Response, error) {
+	if reqBody == nil {
+		return nil, nil, NewArgError("reqBody", "it must not be nil")
+	}
+	storageType := reqBody.StorageType
+	if strings.TrimSpace(storageType) == "" {
+		storageType = "cloud"
+	}
+	return s.Upload(ctx, &UploadObjectRequest{
+		ObjectTypeID: ResourceTypeExtensions,
+		ObjectPath:   reqBody.ObjectPath,
+		StorageType:  storageType,
+		ObjectMeta:   reqBody.ObjectMeta,
+		Encrypt:      reqBody.Encrypt,
+	})
+}
+
+func (s *ResourcesServiceOp) LocalToCloud(ctx context.Context, reqBody *LocalToCloudObjectRequest) (*CreateAndUploadObjectResponse, *Response, error) {
+	if reqBody == nil {
+		return nil, nil, NewArgError("reqBody", "it must not be nil")
+	}
+	if strings.TrimSpace(reqBody.ObjectPath) == "" {
+		return nil, nil, NewArgError("objectPath", "it must not be empty")
+	}
+	req, err := s.client.newLauncherRequest(ctx, http.MethodPost, "/api/v1/object_storage/local_to_cloud", reqBody)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := new(CreateAndUploadObjectResponse)
+	resp, err := s.client.do(req, out)
+	return out, resp, err
+}
+
+func (s *ResourcesServiceOp) CreateExtensionFromURL(ctx context.Context, reqBody *CreateExtensionFromURLRequest) (*EmptyDataResponse, *Response, error) {
+	if reqBody == nil {
+		return nil, nil, NewArgError("reqBody", "it must not be nil")
+	}
+	if strings.TrimSpace(reqBody.URL) == "" {
+		return nil, nil, NewArgError("url", "it must not be empty")
+	}
+	if strings.TrimSpace(reqBody.BrowserType) == "" {
+		return nil, nil, NewArgError("browserType", "it must not be empty")
+	}
+	storageType := reqBody.StorageType
+	if strings.TrimSpace(storageType) == "" {
+		storageType = "cloud"
+	}
+	req, err := s.client.newLauncherRequest(ctx, http.MethodPost, "/api/v1/create_extension_from_url", &CreateExtensionFromURLRequest{
+		URL:         reqBody.URL,
+		BrowserType: reqBody.BrowserType,
+		StorageType: storageType,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	out := new(EmptyDataResponse)
+	resp, err := s.client.do(req, out)
+	return out, resp, err
+}
+
+func (s *ResourcesServiceOp) CreateExtensionFromChromeWebStore(ctx context.Context, reqBody *CreateChromeWebStoreExtensionRequest) (*EmptyDataResponse, *Response, error) {
+	if reqBody == nil {
+		return nil, nil, NewArgError("reqBody", "it must not be nil")
+	}
+	downloadURL, err := ChromeWebStoreExtensionDownloadURL(reqBody.ExtensionID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return s.CreateExtensionFromURL(ctx, &CreateExtensionFromURLRequest{
+		URL:         downloadURL,
+		BrowserType: reqBody.BrowserType,
+		StorageType: reqBody.StorageType,
+	})
+}
+
+func (s *ResourcesServiceOp) EnableExtensionForProfiles(ctx context.Context, resourceID string, reqBody *SetResourceProfilesRequest) (*StringDataResponse, *Response, error) {
+	if strings.TrimSpace(resourceID) == "" {
+		return nil, nil, NewArgError("resourceID", "it must not be empty")
+	}
+	if reqBody == nil {
+		return nil, nil, NewArgError("reqBody", "it must not be nil")
+	}
+	if len(reqBody.ProfileIDs) == 0 {
+		return nil, nil, NewArgError("profileIDs", "it must not be empty")
+	}
+	path := fmt.Sprintf("/api/v1/resources/%s/enable_for_profiles", url.PathEscape(resourceID))
+	req, err := s.client.newAPIRequest(ctx, http.MethodPost, path, reqBody)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := new(StringDataResponse)
+	resp, err := s.client.do(req, out)
+	return out, resp, err
+}
+
+func (s *ResourcesServiceOp) DisableExtensionForProfiles(ctx context.Context, resourceID string, reqBody *SetResourceProfilesRequest) (*StringDataResponse, *Response, error) {
+	if strings.TrimSpace(resourceID) == "" {
+		return nil, nil, NewArgError("resourceID", "it must not be empty")
+	}
+	if reqBody == nil {
+		return nil, nil, NewArgError("reqBody", "it must not be nil")
+	}
+	if len(reqBody.ProfileIDs) == 0 {
+		return nil, nil, NewArgError("profileIDs", "it must not be empty")
+	}
+	path := fmt.Sprintf("/api/v1/resources/%s/disable_for_profiles", url.PathEscape(resourceID))
+	req, err := s.client.newAPIRequest(ctx, http.MethodPost, path, reqBody)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := new(StringDataResponse)
+	resp, err := s.client.do(req, out)
+	return out, resp, err
+}
+
 func (s *ResourcesServiceOp) Download(ctx context.Context, resourceID string) (*DownloadResourceResponse, *Response, error) {
 	if strings.TrimSpace(resourceID) == "" {
 		return nil, nil, NewArgError("resourceID", "it must not be empty")
@@ -387,4 +619,31 @@ func parseDownloadedObjectPath(message string) string {
 		return strings.TrimSpace(strings.TrimPrefix(message, prefix))
 	}
 	return ""
+}
+
+// ChromeWebStoreExtensionDownloadURL converts a Chrome Web Store extension ID into
+// the CRX download URL expected by the launcher extension creation endpoint.
+func ChromeWebStoreExtensionDownloadURL(extensionID string) (string, error) {
+	id := strings.ToLower(strings.TrimSpace(extensionID))
+	if !isChromeWebStoreExtensionID(id) {
+		return "", NewArgError("extensionID", "it must be a 32-character Chrome Web Store extension id")
+	}
+	values := url.Values{}
+	values.Set("response", "redirect")
+	values.Set("prodversion", "131.0.6778.205")
+	values.Set("acceptformat", "crx2,crx3")
+	values.Set("x", fmt.Sprintf("id=%s&installsource=ondemand&uc", id))
+	return "https://clients2.google.com/service/update2/crx?" + values.Encode(), nil
+}
+
+func isChromeWebStoreExtensionID(extensionID string) bool {
+	if len(extensionID) != 32 {
+		return false
+	}
+	for _, ch := range extensionID {
+		if ch < 'a' || ch > 'p' {
+			return false
+		}
+	}
+	return true
 }

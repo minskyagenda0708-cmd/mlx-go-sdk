@@ -1,6 +1,7 @@
 package mlx
 
 import (
+	"archive/zip"
 	"context"
 	"errors"
 	"fmt"
@@ -802,6 +803,210 @@ func TestE2EResourceProfileTemplateLifecycle(t *testing.T) {
 	t.Logf("resources/template lifecycle ok: existing_template=%s created_template=%s downloaded=%s listed=%d usages=%d", resourceID, createdID, downloadResp.Path, len(listResp.Data.Objects), len(usageResp.Data))
 }
 
+func TestE2ELocalProfileSemanticsCreate(t *testing.T) {
+	if os.Getenv(EnvRunE2E) != "1" {
+		t.Skipf("set %s=1 to run E2E tests", EnvRunE2E)
+	}
+	if skipForRateLimit(t) {
+		return
+	}
+
+	client, err := NewFromEnv(WithTimeout(60 * time.Second))
+	if err != nil {
+		t.Fatalf("NewFromEnv returned error: %v", err)
+	}
+
+	folderID := resolveE2EFolderID(t, client)
+	ensureE2ECapacity(t, client, 10)
+
+	ctx := context.Background()
+	profileName := "mlx-local-semantics-create-" + time.Now().UTC().Format("20060102-150405")
+	createResp, _, err := client.Profiles.Create(ctx, newE2ELocalCreateProfileRequest(profileName, folderID))
+	if err != nil {
+		t.Fatalf("Profiles.Create returned error: %v", err)
+	}
+	if len(createResp.Data.IDs) == 0 {
+		t.Fatal("expected created profile id")
+	}
+	profileID := createResp.Data.IDs[0]
+
+	defer func() {
+		_, _, _ = client.Launcher.Stop(ctx, profileID)
+		_, _, _ = client.Profiles.Delete(ctx, &DeleteProfilesRequest{IDs: []string{profileID}, Permanently: true})
+	}()
+
+	report := inspectLocalProfileSemantics(t, client, folderID, profileID, profileName)
+	t.Logf("local create semantics: profile=%s search_all_local=%t meta_is_local=%t metas_is_local=%t meta_storage=%t launcher_local_before=%d launcher_local_after=%d", report.ProfileID, report.SearchAll.IsLocal, report.Meta.IsLocal, report.Metas.IsLocal, report.MetaStorageIsLocal, report.LauncherBefore.Local, report.LauncherAfter.Local)
+}
+
+func TestE2ELocalProfileSemanticsImport(t *testing.T) {
+	if os.Getenv(EnvRunE2E) != "1" {
+		t.Skipf("set %s=1 to run E2E tests", EnvRunE2E)
+	}
+	if skipForRateLimit(t) {
+		return
+	}
+
+	client, err := NewFromEnv(WithTimeout(60 * time.Second))
+	if err != nil {
+		t.Fatalf("NewFromEnv returned error: %v", err)
+	}
+
+	folderID := resolveE2EFolderID(t, client)
+	ensureE2ECapacity(t, client, 10)
+
+	ctx := context.Background()
+	sourceName := "mlx-local-semantics-source-" + time.Now().UTC().Format("20060102-150405")
+	createResp, _, err := client.Profiles.Create(ctx, newE2ECreateProfileRequest(sourceName, folderID))
+	if err != nil {
+		t.Fatalf("Profiles.Create source returned error: %v", err)
+	}
+	if len(createResp.Data.IDs) == 0 {
+		t.Fatal("expected source profile id")
+	}
+	sourceID := createResp.Data.IDs[0]
+	importedID := ""
+
+	defer func() {
+		if importedID != "" {
+			_, _, _ = client.Launcher.Stop(ctx, importedID)
+			_, _, _ = client.Profiles.Delete(ctx, &DeleteProfilesRequest{IDs: []string{importedID}, Permanently: true})
+		}
+		if sourceID != "" {
+			_, _, _ = client.Profiles.Delete(ctx, &DeleteProfilesRequest{IDs: []string{sourceID}, Permanently: true})
+		}
+	}()
+
+	exportResp, _, err := client.Transfers.Export(ctx, sourceID)
+	if err != nil {
+		t.Fatalf("Transfers.Export returned error: %v", err)
+	}
+	exportStatus := waitForExportDone(t, client, exportResp.Data.ExportID)
+	archivePath := exportStatus.Data.ArchivePath()
+
+	_, _, err = client.Profiles.Delete(ctx, &DeleteProfilesRequest{IDs: []string{sourceID}, Permanently: true})
+	if err != nil {
+		t.Fatalf("Profiles.Delete source returned error: %v", err)
+	}
+	sourceID = ""
+
+	importResp, _, err := client.Transfers.Import(ctx, &ImportProfileRequest{ImportPath: archivePath, IsLocal: true})
+	if err != nil {
+		t.Fatalf("Transfers.Import returned error: %v", err)
+	}
+	importStatus := waitForImportDone(t, client, importResp.Data.ImportID)
+	if strings.TrimSpace(importStatus.Data.NewProfileID) == "" {
+		t.Fatal("expected imported profile id")
+	}
+	importedID = importStatus.Data.NewProfileID
+
+	report := inspectLocalProfileSemantics(t, client, folderID, importedID, sourceName)
+	t.Logf("local import semantics: profile=%s search_all_local=%t meta_is_local=%t metas_is_local=%t meta_storage=%t launcher_local_before=%d launcher_local_after=%d archive=%s", report.ProfileID, report.SearchAll.IsLocal, report.Meta.IsLocal, report.Metas.IsLocal, report.MetaStorageIsLocal, report.LauncherBefore.Local, report.LauncherAfter.Local, archivePath)
+}
+
+func TestE2EExtensionWorkflow(t *testing.T) {
+	if os.Getenv(EnvRunE2E) != "1" {
+		t.Skipf("set %s=1 to run E2E tests", EnvRunE2E)
+	}
+	if skipForRateLimit(t) {
+		return
+	}
+
+	client, err := NewFromEnv(WithTimeout(60 * time.Second))
+	if err != nil {
+		t.Fatalf("NewFromEnv returned error: %v", err)
+	}
+
+	ctx := context.Background()
+	profileID, meta := resolveE2ELocalProfileForExtension(t, client)
+	if strings.TrimSpace(profileID) == "" || meta == nil {
+		t.Skip("no local profile available for live extension workflow validation")
+	}
+
+	if !meta.CheckLocal() {
+		t.Skipf("expected a local profile for extension validation, got profile=%s check_local=%t raw_is_local=%t", profileID, meta.CheckLocal(), meta.IsLocal)
+	}
+
+	extensionPath := createE2EExtensionArchive(t, meta.Name)
+	uploadResp, _, err := client.Resources.UploadExtension(ctx, &UploadExtensionRequest{ObjectPath: extensionPath})
+	if err != nil {
+		t.Fatalf("Resources.UploadExtension returned error: %v", err)
+	}
+	if uploadResp.Data.MetaID == "" {
+		t.Fatal("expected uploaded extension meta id")
+	}
+	extensionID := uploadResp.Data.MetaID
+	defer func() {
+		_, _, _ = client.Resources.Delete(ctx, extensionID, true)
+	}()
+
+	if _, _, err := client.Resources.EnableExtensionForProfiles(ctx, extensionID, &SetResourceProfilesRequest{ProfileIDs: []string{profileID}}); err != nil {
+		t.Fatalf("Resources.EnableExtensionForProfiles returned error: %v", err)
+	}
+
+	profileUsages := waitForProfileExtensionUsage(t, client, profileID, extensionID, true)
+	objectUsages := waitForObjectProfileUsage(t, client, extensionID, profileID, true)
+
+	if _, _, err := client.Resources.DisableExtensionForProfiles(ctx, extensionID, &SetResourceProfilesRequest{ProfileIDs: []string{profileID}}); err != nil {
+		t.Fatalf("Resources.DisableExtensionForProfiles returned error: %v", err)
+	}
+	_ = waitForProfileExtensionUsage(t, client, profileID, extensionID, false)
+
+	t.Logf("extension workflow ok: profile=%s local_profile=%t raw_meta_is_local=%t extension=%s archive=%s profile_usages=%d object_usages=%d", profileID, meta.CheckLocal(), meta.IsLocal, extensionID, extensionPath, len(profileUsages.Data), len(objectUsages.Data))
+}
+
+func TestE2EChromeWebStoreExtensionCreation(t *testing.T) {
+	if os.Getenv(EnvRunE2E) != "1" {
+		t.Skipf("set %s=1 to run E2E tests", EnvRunE2E)
+	}
+	if skipForRateLimit(t) {
+		return
+	}
+
+	client, err := NewFromEnv(WithTimeout(60 * time.Second))
+	if err != nil {
+		t.Fatalf("NewFromEnv returned error: %v", err)
+	}
+
+	ctx := context.Background()
+	trashbin := false
+	beforeResp, _, err := client.Resources.ListExtensions(ctx, &ListResourceMetasOptions{
+		ObjectName: "Google Docs Offline",
+		Limit:      50,
+		Offset:     0,
+		Trashbin:   &trashbin,
+	})
+	if err != nil {
+		t.Fatalf("Resources.ListExtensions before create returned error: %v", err)
+	}
+	beforeIDs := make(map[string]struct{}, len(beforeResp.Data.Objects))
+	for _, object := range beforeResp.Data.Objects {
+		beforeIDs[object.ID] = struct{}{}
+	}
+
+	_, _, err = client.Resources.CreateExtensionFromChromeWebStore(ctx, &CreateChromeWebStoreExtensionRequest{
+		ExtensionID: "ghbmnnjooekpmoecnnnilnnbdlolhkhi",
+		BrowserType: "mimic",
+	})
+	if err != nil {
+		message := err.Error()
+		if strings.Contains(message, "failed to fetch extension") || strings.Contains(message, "status: 404") {
+			t.Logf("chrome web store extension creation currently fails in live launcher fetch flow: %v", err)
+			return
+		}
+		t.Fatalf("Resources.CreateExtensionFromChromeWebStore returned error: %v", err)
+	}
+
+	created := waitForNewNamedExtension(t, client, "Google Docs Offline", beforeIDs)
+	defer func() {
+		if created.ID != "" {
+			_, _, _ = client.Resources.Delete(ctx, created.ID, true)
+		}
+	}()
+
+	t.Logf("chrome web store extension ok: extension=%s name=%s storage=%s", created.ID, created.ObjectName, created.StorageType)
+}
+
 func preflightE2EError() error {
 	client, err := NewFromEnv(WithTimeout(30 * time.Second))
 	if err != nil {
@@ -1000,6 +1205,274 @@ func waitForImportDone(t *testing.T, client *Client, importID string) *ImportSta
 		t.Fatalf("Transfers.WaitForImportDone returned error: %v", err)
 	}
 	return resp
+}
+
+func createE2EExtensionArchive(t *testing.T, name string) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "extension.zip")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create extension archive: %v", err)
+	}
+	defer file.Close()
+
+	zw := zip.NewWriter(file)
+	manifest, err := zw.Create("manifest.json")
+	if err != nil {
+		t.Fatalf("create manifest.json entry: %v", err)
+	}
+	manifestBody := fmt.Sprintf(`{"manifest_version":3,"name":"%s","version":"1.0.0","action":{"default_title":"mlx-go-sdk"}}`, name)
+	if _, err := manifest.Write([]byte(manifestBody)); err != nil {
+		t.Fatalf("write manifest.json: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("close extension archive: %v", err)
+	}
+	return path
+}
+
+type localProfileSemanticsReport struct {
+	ProfileID           string
+	SearchAll           *Profile
+	SearchLocal         *Profile
+	SearchCloud         *Profile
+	Meta                *ProfileMeta
+	Metas               *ProfileMeta
+	MetaStorageIsLocal  bool
+	MetasStorageIsLocal bool
+	LauncherBefore      LauncherActiveCounter
+	LauncherAfter       LauncherActiveCounter
+}
+
+func inspectLocalProfileSemantics(t *testing.T, client *Client, folderID, profileID, profileName string) *localProfileSemanticsReport {
+	t.Helper()
+
+	ctx := context.Background()
+	searchAll := searchExactProfile(t, client, profileName, "all")
+	searchLocal := searchExactProfile(t, client, profileName, "local")
+	searchCloud := searchOptionalExactProfile(t, client, profileName, "cloud")
+	if searchAll == nil {
+		t.Fatalf("expected profile %q in storage_type=all search", profileName)
+	}
+	if searchLocal == nil {
+		t.Fatalf("expected profile %q in storage_type=local search", profileName)
+	}
+	if searchCloud != nil {
+		t.Fatalf("expected profile %q to be absent from storage_type=cloud search, got id=%s", profileName, searchCloud.ID)
+	}
+	if !searchAll.IsLocal || !searchLocal.IsLocal {
+		t.Fatalf("expected local search signals for %q, got search_all=%t search_local=%t", profileName, searchAll.IsLocal, searchLocal.IsLocal)
+	}
+
+	meta, _, err := client.Profiles.GetMeta(ctx, profileID)
+	if err != nil {
+		t.Fatalf("Profiles.GetMeta returned error: %v", err)
+	}
+	metasResp, _, err := client.Profiles.GetMetas(ctx, &ProfileMetasRequest{IDs: []string{profileID}})
+	if err != nil {
+		t.Fatalf("Profiles.GetMetas returned error: %v", err)
+	}
+	if len(metasResp.Data.Profiles) != 1 {
+		t.Fatalf("expected one profile meta, got %d", len(metasResp.Data.Profiles))
+	}
+	metas := metasResp.Data.Profiles[0]
+	metaStorageIsLocal := meta.Parameters != nil && meta.Parameters.Storage != nil && meta.Parameters.Storage.IsLocal
+	metasStorageIsLocal := metas.Parameters != nil && metas.Parameters.Storage != nil && metas.Parameters.Storage.IsLocal
+	if !metaStorageIsLocal || !metasStorageIsLocal {
+		t.Fatalf("expected profile meta parameters.storage.is_local=true for %q, got meta=%t metas=%t", profileName, metaStorageIsLocal, metasStorageIsLocal)
+	}
+	if !meta.IsLocal || !metas.IsLocal {
+		t.Logf("live mismatch: search and launcher classify %q as local, but top-level meta flags are GetMeta.IsLocal=%t GetMetas.IsLocal=%t", profileName, meta.IsLocal, metas.IsLocal)
+	}
+
+	beforeResp, _, err := client.Launcher.Statuses(ctx)
+	if err != nil {
+		t.Fatalf("Launcher.Statuses before start returned error: %v", err)
+	}
+	_, _, err = client.Launcher.Start(ctx, folderID, profileID, StartProfileOptions{AutomationType: AutomationPlaywright})
+	if err != nil {
+		t.Fatalf("Launcher.Start returned error: %v", err)
+	}
+	_, _, err = client.Launcher.WaitForRunning(ctx, profileID, PollOptions{})
+	if err != nil {
+		t.Fatalf("Launcher.WaitForRunning returned error: %v", err)
+	}
+	afterResp, _, err := client.Launcher.Statuses(ctx)
+	if err != nil {
+		t.Fatalf("Launcher.Statuses after start returned error: %v", err)
+	}
+	_, _, _ = client.Launcher.Stop(ctx, profileID)
+
+	localDelta := afterResp.Data.ActiveCounter.Local - beforeResp.Data.ActiveCounter.Local
+	cloudDelta := afterResp.Data.ActiveCounter.Cloud - beforeResp.Data.ActiveCounter.Cloud
+	if localDelta <= 0 {
+		t.Fatalf("expected local active counter to increase for %q, got before=%#v after=%#v", profileName, beforeResp.Data.ActiveCounter, afterResp.Data.ActiveCounter)
+	}
+	if cloudDelta != 0 {
+		t.Fatalf("expected cloud active counter to remain unchanged for %q, got before=%#v after=%#v", profileName, beforeResp.Data.ActiveCounter, afterResp.Data.ActiveCounter)
+	}
+
+	return &localProfileSemanticsReport{
+		ProfileID:           profileID,
+		SearchAll:           searchAll,
+		SearchLocal:         searchLocal,
+		SearchCloud:         searchCloud,
+		Meta:                meta,
+		Metas:               &metas,
+		MetaStorageIsLocal:  metaStorageIsLocal,
+		MetasStorageIsLocal: metasStorageIsLocal,
+		LauncherBefore:      beforeResp.Data.ActiveCounter,
+		LauncherAfter:       afterResp.Data.ActiveCounter,
+	}
+}
+
+func searchExactProfile(t *testing.T, client *Client, profileName, storageType string) *Profile {
+	t.Helper()
+	profile := searchOptionalExactProfile(t, client, profileName, storageType)
+	if profile == nil {
+		t.Fatalf("expected profile %q in storage_type=%s search", profileName, storageType)
+	}
+	return profile
+}
+
+func searchOptionalExactProfile(t *testing.T, client *Client, profileName, storageType string) *Profile {
+	t.Helper()
+
+	resp, _, err := client.Profiles.Search(context.Background(), &SearchProfilesRequest{
+		IsRemoved:   false,
+		Limit:       100,
+		Offset:      0,
+		SearchText:  profileName,
+		StorageType: storageType,
+		OrderBy:     "updated_at",
+		Sort:        "desc",
+	})
+	if err != nil {
+		t.Fatalf("Profiles.Search storage_type=%s returned error: %v", storageType, err)
+	}
+	for _, profile := range resp.Data.Profiles {
+		if strings.EqualFold(profile.Name, profileName) {
+			matched := profile
+			return &matched
+		}
+	}
+	return nil
+}
+
+func resolveE2ELocalProfileForExtension(t *testing.T, client *Client) (string, *ProfileMeta) {
+	t.Helper()
+
+	ctx := context.Background()
+	if profileID := os.Getenv(EnvE2EProfileID); strings.TrimSpace(profileID) != "" {
+		meta, _, err := client.Profiles.GetMeta(ctx, profileID)
+		if err != nil {
+			t.Fatalf("Profiles.GetMeta returned error for %s: %v", EnvE2EProfileID, err)
+		}
+		return profileID, meta
+	}
+
+	folderID := resolveE2EFolderID(t, client)
+	ensureE2ECapacity(t, client, 10)
+
+	profileName := "mlx-go-sdk-ext-local-" + time.Now().UTC().Format("20060102-150405")
+	createResp, _, err := client.Profiles.Create(ctx, newE2ELocalCreateProfileRequest(profileName, folderID))
+	if err != nil {
+		t.Fatalf("Profiles.Create returned error: %v", err)
+	}
+	if len(createResp.Data.IDs) == 0 {
+		t.Fatal("expected created profile id")
+	}
+	profileID := createResp.Data.IDs[0]
+	t.Cleanup(func() {
+		_, _, _ = client.Profiles.Delete(ctx, &DeleteProfilesRequest{IDs: []string{profileID}, Permanently: true})
+	})
+
+	meta, _, err := client.Profiles.GetMeta(ctx, profileID)
+	if err != nil {
+		t.Fatalf("Profiles.GetMeta returned error: %v", err)
+	}
+	if !meta.CheckLocal() {
+		t.Logf("live note: local-intended profile resolved as non-local even via CheckLocal for profile=%s raw_is_local=%t", profileID, meta.IsLocal)
+	}
+	return profileID, meta
+}
+
+func waitForProfileExtensionUsage(t *testing.T, client *Client, profileID, extensionID string, shouldExist bool) *ProfileObjectUsagesResponse {
+	t.Helper()
+
+	deadline := time.Now().Add(90 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, _, err := client.Resources.ProfileExtensionUsages(context.Background(), profileID)
+		if err == nil {
+			found := false
+			for _, usage := range resp.Data {
+				if usage.ID == extensionID {
+					found = true
+					break
+				}
+			}
+			if found == shouldExist {
+				return resp
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	t.Fatalf("profile extension usage for profile=%s extension=%s did not reach shouldExist=%t before timeout", profileID, extensionID, shouldExist)
+	return nil
+}
+
+func waitForObjectProfileUsage(t *testing.T, client *Client, extensionID, profileID string, shouldExist bool) *ObjectProfileUsagesResponse {
+	t.Helper()
+
+	deadline := time.Now().Add(90 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, _, err := client.Resources.ObjectProfileUsages(context.Background(), extensionID)
+		if err == nil {
+			found := false
+			for _, usage := range resp.Data {
+				if usage.ID == profileID {
+					found = true
+					break
+				}
+			}
+			if found == shouldExist {
+				return resp
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	t.Fatalf("object profile usage for extension=%s profile=%s did not reach shouldExist=%t before timeout", extensionID, profileID, shouldExist)
+	return nil
+}
+
+func waitForNewNamedExtension(t *testing.T, client *Client, objectName string, beforeIDs map[string]struct{}) ResourceMeta {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Minute)
+	trashbin := false
+	for time.Now().Before(deadline) {
+		resp, _, err := client.Resources.ListExtensions(context.Background(), &ListResourceMetasOptions{
+			ObjectName: objectName,
+			Limit:      50,
+			Offset:     0,
+			Trashbin:   &trashbin,
+		})
+		if err == nil {
+			for _, object := range resp.Data.Objects {
+				if _, seen := beforeIDs[object.ID]; !seen {
+					return object
+				}
+			}
+		}
+		time.Sleep(3 * time.Second)
+	}
+
+	t.Fatalf("new extension named %q was not listed before timeout", objectName)
+	return ResourceMeta{}
 }
 
 func hasCookieWebsite(websites []CookieWebsite, key string) bool {

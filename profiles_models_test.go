@@ -84,3 +84,22 @@ func TestProfileMetasResponseUnmarshalsExtendedFields(t *testing.T) {
 		t.Fatal("expected removed_at to unmarshal")
 	}
 }
+
+func TestProfileMetaCheckLocalUsesStorageParameters(t *testing.T) {
+	meta := &ProfileMeta{
+		IsLocal: false,
+		Parameters: &ProfileParameters{
+			Storage: &Storage{IsLocal: true},
+		},
+	}
+	if !meta.CheckLocal() {
+		t.Fatal("expected CheckLocal to use parameters.storage.is_local")
+	}
+}
+
+func TestProfileMetaCheckLocalDoesNotFallbackToTopLevelFlag(t *testing.T) {
+	meta := &ProfileMeta{IsLocal: true}
+	if meta.CheckLocal() {
+		t.Fatal("expected CheckLocal to ignore the buggy top-level is_local field")
+	}
+}

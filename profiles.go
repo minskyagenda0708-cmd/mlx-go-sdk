@@ -245,12 +245,20 @@ type CommandParam struct {
 
 // Proxy contains proxy settings.
 type Proxy struct {
-	Host        string `json:"host,omitempty"`
-	Type        string `json:"type,omitempty"`
-	Port        int    `json:"port,omitempty"`
-	Username    string `json:"username,omitempty"`
-	Password    string `json:"password,omitempty"`
-	SaveTraffic bool   `json:"save_traffic,omitempty"`
+	Host             string `json:"host,omitempty"`
+	Type             string `json:"type,omitempty"`
+	Port             int    `json:"port,omitempty"`
+	Username         string `json:"username,omitempty"`
+	Password         string `json:"password,omitempty"`
+	SaveTraffic      bool   `json:"save_traffic,omitempty"`
+	Country          string `json:"country,omitempty"`
+	Region           string `json:"region,omitempty"`
+	City             string `json:"city,omitempty"`
+	SessionID        string `json:"session_id,omitempty"`
+	Provider         string `json:"provider,omitempty"`
+	ConnectionString string `json:"connection_string,omitempty"`
+	RetentionKey     string `json:"retention_key,omitempty"`
+	RetentionSecret  string `json:"retention_secret,omitempty"`
 }
 
 // CreateProfileResponse contains created profile IDs.
@@ -347,6 +355,33 @@ type ProfileMeta struct {
 	RemovedBy      string             `json:"removed_by"`
 	Status         string             `json:"status"`
 	Parameters     *ProfileParameters `json:"parameters,omitempty"`
+}
+
+/*
+Multilogin X live validation showed that the top-level `is_local` flag returned by
+`/profile/metas` can be incorrect for real local profiles created or imported with
+local storage semantics. In contrast, these signals were confirmed to match actual
+behavior in live tests and should be treated as more reliable:
+
+  - `profile/search` filtered with `storage_type=local|cloud|all`
+  - `parameters.storage.is_local` inside profile metas
+  - launcher active counters (`/api/v1/profile/statuses`)
+
+Because of that MLX API bug/quirk, SDK code must treat `ProfileMeta.IsLocal` as a
+diagnostic/raw field only and avoid using it for local/cloud decisions.
+*/
+
+// CheckLocal returns the confirmed local/cloud storage signal for a profile meta.
+//
+// It intentionally ignores the top-level `ProfileMeta.IsLocal` field because live
+// MLX responses from `/profile/metas` returned incorrect values for real local
+// profiles. When storage parameters are absent, this helper returns false instead of
+// falling back to the buggy top-level flag.
+func (m *ProfileMeta) CheckLocal() bool {
+	if m == nil || m.Parameters == nil || m.Parameters.Storage == nil {
+		return false
+	}
+	return m.Parameters.Storage.IsLocal
 }
 
 // ProfileSummaryResponse contains fingerprint summary details.

@@ -12,10 +12,12 @@ const (
 	defaultBaseURL     = "https://api.multilogin.com/"
 	defaultLauncherURL = "https://launcher.mlx.yt:45001/"
 	defaultCookiesURL  = "https://cookies.multilogin.com/"
+	defaultProxyURL    = "https://profile-proxy.multilogin.com/"
 	defaultUserAgent   = "mlx-go-sdk/0.1"
 	EnvBaseURL         = "MLX_BASE_URL"
 	EnvLauncherURL     = "MLX_LAUNCHER_URL"
 	EnvCookiesURL      = "MLX_COOKIES_URL"
+	EnvProxyURL        = "MLX_PROXY_URL"
 	EnvRunE2E          = "MLX_RUN_E2E"
 	EnvE2EFolderID     = "MLX_E2E_FOLDER_ID"
 	EnvE2EProfileID    = "MLX_E2E_PROFILE_ID"
@@ -56,6 +58,18 @@ func WithCookiesURL(raw string) Option {
 			return fmt.Errorf("%w: %v", ErrInvalidBaseURL, err)
 		}
 		c.cookiesURL = u
+		return nil
+	}
+}
+
+// WithProxyURL overrides the MLX profile proxy API base URL.
+func WithProxyURL(raw string) Option {
+	return func(c *Client) error {
+		u, err := parseBaseURL(raw)
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalidBaseURL, err)
+		}
+		c.proxyURL = u
 		return nil
 	}
 }
