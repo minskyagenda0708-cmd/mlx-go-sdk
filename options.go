@@ -121,6 +121,15 @@ func WithTimeout(timeout time.Duration) Option {
 	}
 }
 
+// WithRetry configures automatic retries for transient transport and MLX API failures.
+func WithRetry(opts RetryOptions) Option {
+	return func(c *Client) error {
+		c.retry = normalizeRetryOptions(opts)
+		c.retrySet = true
+		return nil
+	}
+}
+
 func parseBaseURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil {

@@ -12,6 +12,8 @@ type Client struct {
 	launcherURL stringableURL
 	cookiesURL  stringableURL
 	proxyURL    stringableURL
+	retry       RetryOptions
+	retrySet    bool
 	token       string
 	userAgent   string
 
