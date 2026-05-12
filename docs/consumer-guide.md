@@ -6,7 +6,7 @@ The safest production pattern is:
 
 1. create one configured client
 2. keep transport, retry, and timeout policy in one place
-3. build app-specific commands under `cmd/`
+3. build app-specific commands under `cmd/` in the consuming application
 4. use verified workflows for stateful operations
 5. treat live MLX edge cases as first-class design constraints
 
@@ -237,18 +237,27 @@ Examples:
 - local profile semantics should not depend on the raw top-level meta flag
 - proxy retention should use parsed affinity metadata rather than assuming identical regenerated credentials
 
-## Suggested commands under `cmd/`
+## Suggested consumer entrypoints under `cmd/`
 
-Good candidate commands for a consumer CLI:
+For a downstream consumer CLI, good candidate `cmd/` entrypoints are:
 
-- `cmd/profiles-create`
-- `cmd/profiles-start`
-- `cmd/profiles-stop`
-- `cmd/profiles-export`
-- `cmd/profiles-import`
-- `cmd/extensions-enable`
-- `cmd/cookies-seed`
-- `cmd/proxy-assign`
+- `cmd/profiles`
+- `cmd/exports`
+- `cmd/imports`
+- `cmd/extensions`
+- `cmd/cookies`
+- `cmd/proxy`
+
+Within those entrypoints, expose focused subcommands such as:
+
+- `profiles create`
+- `profiles start`
+- `profiles stop`
+- `exports run`
+- `imports run`
+- `extensions enable`
+- `cookies seed`
+- `proxy assign`
 
 Each command should:
 
