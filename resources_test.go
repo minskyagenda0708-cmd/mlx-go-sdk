@@ -412,6 +412,8 @@ func TestResourcesWorkflowDefaultsToLocalStorage(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/profile/search":
 			gotStorageType = extractBodyField(t, r, `"storage_type":"`)
 			fmt.Fprint(w, `{"status":{"http_code":200,"message":""},"data":{"profiles":[{"id":"profile-1","name":"Demo","folder_id":"folder-1","browser_type":"mimic","os_type":"windows","core_version":137,"notes":"","created_by":"me@example.com","in_use_by":"","last_launched_by":"","is_local":true}],"total_count":1}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/profile/metas":
+			fmt.Fprint(w, `{"status":{"http_code":200,"message":""},"data":{"profiles":[{"id":"profile-1","name":"Demo","folder_id":"folder-1","browser_type":"mimic","core_version":137,"os_type":"windows","workspace_id":"ws-1","created_at":"2026-04-20T00:00:00Z","created_by":"me@example.com","last_update_at":"2026-04-20T00:00:00Z","last_updated_by":"me@example.com","status":"ready","parameters":{"storage":{"is_local":true}}}]}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/profile/stop/p/profile-1":
 			fmt.Fprint(w, `{"status":{"http_code":200,"message":"Profile stopped successfully"},"data":null}`)
 		default:
