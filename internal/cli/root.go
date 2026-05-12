@@ -2002,7 +2002,10 @@ func runExtensionEnable(args []string, global globalOptions) error {
 		if err != nil {
 			return err
 		}
-		usages, _, usageErr := rt.Client.Resources.ObjectProfileUsages(context.Background(), *resourceID)
+		usages, err := waitForObjectUsageAttached(context.Background(), rt, *resourceID, profile.ID)
+		if err != nil {
+			return err
+		}
 		profileUsages, _, profileUsageErr := rt.Client.Resources.ProfileExtensionUsages(context.Background(), profile.ID)
 		if profileUsageErr != nil && profileUsageReadRequired {
 			return profileUsageErr
@@ -2013,7 +2016,6 @@ func runExtensionEnable(args []string, global globalOptions) error {
 			"object_usages":   usages,
 			"profile_usages":  profileUsages,
 			"profile_error":   errorString(profileUsageErr),
-			"usage_error":     errorString(usageErr),
 		})
 	})
 }
@@ -3216,7 +3218,7 @@ func waitForStoppedStatus(ctx context.Context, rt *Runtime, profileID string) (*
 		if err == nil {
 			last = resp
 			status := strings.ToLower(strings.TrimSpace(resp.Data.Status))
-			if status == "" || !strings.Contains(status, "running") {
+			if status == "stopped" || strings.Contains(status, "stopped") {
 				return resp, nil
 			}
 		}
@@ -3231,6 +3233,56 @@ func waitForStoppedStatus(ctx context.Context, rt *Runtime, profileID string) (*
 		}
 		interval = nextInterval(interval, opts.Multiplier, opts.MaxInterval)
 	}
+}
+
+func waitForObjectUsageAttached(ctx context.Context, rt *Runtime, resourceID, profileID string) (*mlx.ObjectProfileUsagesResponse, error) {
+	opts := rt.Config.PollOptions()
+	deadline := time.Now().Add(opts.Timeout)
+	interval := opts.InitialInterval
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	if opts.MaxInterval <= 0 {
+		opts.MaxInterval = interval
+	}
+	if opts.Multiplier <= 1 {
+		opts.Multiplier = 1.5
+	}
+
+	var last *mlx.ObjectProfileUsagesResponse
+	for {
+		resp, _, err := rt.Client.Resources.ObjectProfileUsages(ctx, resourceID)
+		if err == nil {
+			last = resp
+			if objectUsageContainsProfile(resp, profileID) {
+				return resp, nil
+			}
+		} else if !time.Now().Before(deadline) {
+			return nil, err
+		}
+		if !time.Now().Before(deadline) {
+			if last != nil {
+				return nil, fmt.Errorf("extension %s was not attached to profile %s before timeout, object_usages=%d", resourceID, profileID, len(last.Data))
+			}
+			return nil, fmt.Errorf("extension %s was not attached to profile %s before timeout", resourceID, profileID)
+		}
+		if err := sleepContext(ctx, interval); err != nil {
+			return nil, err
+		}
+		interval = nextInterval(interval, opts.Multiplier, opts.MaxInterval)
+	}
+}
+
+func objectUsageContainsProfile(resp *mlx.ObjectProfileUsagesResponse, profileID string) bool {
+	if resp == nil {
+		return false
+	}
+	for _, usage := range resp.Data {
+		if usage.ID == profileID {
+			return true
+		}
+	}
+	return false
 }
 
 func sleepContext(ctx context.Context, d time.Duration) error {

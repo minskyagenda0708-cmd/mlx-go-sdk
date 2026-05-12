@@ -333,6 +333,128 @@ func TestExecuteImportRunUsesConfigBoolDefaults(t *testing.T) {
 	}
 }
 
+func TestExecuteLauncherStopWaitRequiresExplicitStoppedStatus(t *testing.T) {
+	t.Setenv(mlx.EnvToken, "test-token")
+
+	statusCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/profile/metas":
+			fmt.Fprint(w, `{"status":{"http_code":200,"message":""},"data":{"profiles":[{"id":"profile-1","name":"Demo","folder_id":"folder-1","browser_type":"mimic","core_version":137,"os_type":"windows","workspace_id":"ws-1","created_at":"2026-04-20T00:00:00Z","created_by":"me@example.com","last_update_at":"2026-04-20T00:00:00Z","last_updated_by":"me@example.com","status":"ready","parameters":{"storage":{"is_local":false}}}]}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/profile/stop/p/profile-1":
+			fmt.Fprint(w, `{"status":{"http_code":200,"message":"Profile stopped successfully"},"data":null}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/profile/status/p/profile-1":
+			statusCalls++
+			if statusCalls == 1 {
+				fmt.Fprint(w, `{"status":{"http_code":200,"message":""},"data":{"profile_id":"profile-1","name":"Demo","status":"stopping","browser_type":"mimic","core_version":137,"folder_id":"folder-1","workspace_id":"workspace-1","message":"","timestamp":1745100000000}}`)
+				return
+			}
+			fmt.Fprint(w, `{"status":{"http_code":200,"message":""},"data":{"profile_id":"profile-1","name":"Demo","status":"stopped","browser_type":"mimic","core_version":137,"folder_id":"folder-1","workspace_id":"workspace-1","message":"","timestamp":1745100001000}}`)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	configPath := writeRuntimeConfigFile(t, fmt.Sprintf(`{
+  "version": "1",
+  "endpoints": {
+    "base_url": %q,
+    "launcher_url": %q
+  },
+  "output": {
+    "format": "json"
+  },
+  "retry": {
+    "enabled": false
+  },
+  "poll": {
+    "initial_interval": "1ms",
+    "max_interval": "1ms",
+    "timeout": "200ms",
+    "multiplier": 1.5
+  }
+}`, server.URL, server.URL))
+
+	output, err := captureCLIStdout(func() error {
+		return Execute([]string{"--config", configPath, "launcher", "stop", "--profile-id", "profile-1", "--wait"})
+	})
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if statusCalls < 2 {
+		t.Fatalf("expected stop wait to poll until explicit stopped status, got %d status calls", statusCalls)
+	}
+	if !strings.Contains(output, `"stopped"`) {
+		t.Fatalf("expected stopped runtime status in output, got %s", output)
+	}
+}
+
+func TestExecuteExtensionEnableByIDWaitsForObjectUsageBinding(t *testing.T) {
+	t.Setenv(mlx.EnvToken, "test-token")
+
+	objectUsageCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/profile/metas":
+			fmt.Fprint(w, `{"status":{"http_code":200,"message":""},"data":{"profiles":[{"id":"profile-1","name":"Demo","folder_id":"folder-1","browser_type":"mimic","core_version":137,"os_type":"windows","workspace_id":"ws-1","created_at":"2026-04-20T00:00:00Z","created_by":"me@example.com","last_update_at":"2026-04-20T00:00:00Z","last_updated_by":"me@example.com","status":"ready","parameters":{"storage":{"is_local":false}}}]}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/resources/ext-1/enable_for_profiles":
+			fmt.Fprint(w, `{"status":{"http_code":200,"message":""},"data":"enabled"}`)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/resources/object_profile_usages"):
+			objectUsageCalls++
+			if objectUsageCalls == 1 {
+				fmt.Fprint(w, `{"status":{"http_code":200,"message":""},"data":[]}`)
+				return
+			}
+			fmt.Fprint(w, `{"status":{"http_code":200,"message":""},"data":[{"id":"profile-1","object_id":"ext-1"}]}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/resources/profile_object_usages":
+			w.WriteHeader(http.StatusNotImplemented)
+			fmt.Fprint(w, `{"status":{"http_code":501,"message":"not implemented"}}`)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	configPath := writeRuntimeConfigFile(t, fmt.Sprintf(`{
+  "version": "1",
+  "endpoints": {
+    "base_url": %q,
+    "launcher_url": %q
+  },
+  "output": {
+    "format": "json"
+  },
+  "retry": {
+    "enabled": false
+  },
+  "poll": {
+    "initial_interval": "1ms",
+    "max_interval": "1ms",
+    "timeout": "200ms",
+    "multiplier": 1.5
+  },
+  "defaults": {
+    "extension": {
+      "require_profile_usage_read": false
+    }
+  }
+}`, server.URL, server.URL))
+
+	output, err := captureCLIStdout(func() error {
+		return Execute([]string{"--config", configPath, "extension", "enable", "--id", "ext-1", "--profile-id", "profile-1"})
+	})
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if objectUsageCalls < 2 {
+		t.Fatalf("expected extension enable to wait for attached object usage, got %d usage calls", objectUsageCalls)
+	}
+	if !strings.Contains(output, `"object_id": "ext-1"`) && !strings.Contains(output, `"object_id":"ext-1"`) {
+		t.Fatalf("expected verified object usage binding in output, got %s", output)
+	}
+}
+
 func captureCLIStdout(fn func() error) (string, error) {
 	oldStdout := os.Stdout
 	r, w, err := os.Pipe()
