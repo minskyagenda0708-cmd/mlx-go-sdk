@@ -217,6 +217,122 @@ func TestExecuteProfileCreateFromTemplateWithWaitAndLocalOverride(t *testing.T) 
 	}
 }
 
+func TestExecuteLauncherStartUsesConfigBoolDefaults(t *testing.T) {
+	t.Setenv(mlx.EnvToken, "test-token")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/profile/metas":
+			fmt.Fprint(w, `{"status":{"http_code":200,"message":""},"data":{"profiles":[{"id":"profile-1","name":"Demo","folder_id":"folder-1","browser_type":"mimic","core_version":137,"os_type":"windows","workspace_id":"ws-1","created_at":"2026-04-20T00:00:00Z","created_by":"me@example.com","last_update_at":"2026-04-20T00:00:00Z","last_updated_by":"me@example.com","status":"ready","parameters":{"storage":{"is_local":false}}}]}}`)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v2/profile/f/folder-1/p/profile-1/start"):
+			if got := r.URL.Query().Get("headless_mode"); got != "true" {
+				t.Fatalf("expected headless_mode=true from config default, got %q", got)
+			}
+			if got := r.URL.Query().Get("automation_type"); got != "playwright" {
+				t.Fatalf("expected automation_type=playwright from config default, got %q", got)
+			}
+			if got := r.Header.Get("X-Strict-Mode"); got != "true" {
+				t.Fatalf("expected strict mode header from config default, got %q", got)
+			}
+			fmt.Fprint(w, `{"status":{"http_code":200,"message":"Profile started successfully"},"data":{"browser_type":"mimic","core_version":137,"id":"profile-1","is_quick":false,"port":"55513"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/profile/status/p/profile-1":
+			fmt.Fprint(w, `{"status":{"http_code":200,"message":""},"data":{"profile_id":"profile-1","name":"Demo","status":"browser_running","browser_type":"mimic","core_version":137,"folder_id":"folder-1","workspace_id":"workspace-1","message":"","timestamp":1745100000000}}`)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	configPath := writeRuntimeConfigFile(t, fmt.Sprintf(`{
+  "version": "1",
+  "endpoints": {
+    "base_url": %q,
+    "launcher_url": %q
+  },
+  "output": {
+    "format": "json"
+  },
+  "retry": {
+    "enabled": false
+  },
+  "defaults": {
+    "launcher": {
+      "automation_type": "playwright",
+      "headless": true,
+      "strict_mode": true,
+      "wait_for_running": true
+    }
+  }
+}`, server.URL, server.URL))
+
+	output, err := captureCLIStdout(func() error {
+		return Execute([]string{"--config", configPath, "launcher", "start", "--profile-id", "profile-1"})
+	})
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if !strings.Contains(output, `"runtime_status"`) {
+		t.Fatalf("expected launcher start output to include runtime status when wait default is enabled, got %s", output)
+	}
+}
+
+func TestExecuteImportRunUsesConfigBoolDefaults(t *testing.T) {
+	t.Setenv(mlx.EnvToken, "test-token")
+
+	var importBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/profile/import":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("ReadAll returned error: %v", err)
+			}
+			importBody = string(body)
+			fmt.Fprint(w, `{"status":{"http_code":200,"message":""},"data":{"import_id":"import-1","import_path":"C:/exports/demo.zip","status":"running","message":"","timestamp":1745100000000}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/profile/imports/import-1/status":
+			fmt.Fprint(w, `{"status":{"http_code":200,"message":""},"data":{"import_id":"import-1","import_path":"C:/exports/demo.zip","new_profile_id":"profile-1","status":"done","message":"","timestamp":1745100000000}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/profile/metas":
+			fmt.Fprint(w, `{"status":{"http_code":200,"message":""},"data":{"profiles":[{"id":"profile-1","name":"Imported Demo","folder_id":"folder-1","browser_type":"mimic","core_version":137,"os_type":"windows","workspace_id":"ws-1","created_at":"2026-04-20T00:00:00Z","created_by":"me@example.com","last_update_at":"2026-04-20T00:00:00Z","last_updated_by":"me@example.com","status":"ready","parameters":{"storage":{"is_local":true}}}]}}`)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	configPath := writeRuntimeConfigFile(t, fmt.Sprintf(`{
+  "version": "1",
+  "endpoints": {
+    "base_url": %q,
+    "launcher_url": %q
+  },
+  "output": {
+    "format": "json"
+  },
+  "retry": {
+    "enabled": false
+  },
+  "defaults": {
+    "import": {
+      "is_local": true,
+      "wait": true
+    }
+  }
+}`, server.URL, server.URL))
+
+	output, err := captureCLIStdout(func() error {
+		return Execute([]string{"--config", configPath, "import", "run", "--import-path", "C:\\exports\\demo.zip"})
+	})
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if !strings.Contains(importBody, `"is_local":true`) {
+		t.Fatalf("expected import request body to inherit is_local=true from config, got %s", importBody)
+	}
+	if !strings.Contains(output, `"profile_meta"`) && !strings.Contains(output, `"ProfileMeta"`) && !strings.Contains(output, `"Imported Demo"`) {
+		t.Fatalf("expected verified import output when wait default is enabled, got %s", output)
+	}
+}
+
 func captureCLIStdout(fn func() error) (string, error) {
 	oldStdout := os.Stdout
 	r, w, err := os.Pipe()

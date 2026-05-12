@@ -164,7 +164,8 @@ func TestBuildCreateProfileRequestFromTemplateUsesExplicitOverrides(t *testing.T
 		},
 	}
 
-	req, err := buildCreateProfileRequestFromTemplate(doc, "CLI Profile", "folder-override", false)
+	localOverride := false
+	req, err := buildCreateProfileRequestFromTemplate(doc, "CLI Profile", "folder-override", &localOverride)
 	if err != nil {
 		t.Fatalf("buildCreateProfileRequestFromTemplate returned error: %v", err)
 	}
@@ -207,7 +208,7 @@ func TestBuildCreateProfileRequestFromTemplateFallsBackToTemplateNames(t *testin
 		},
 	}
 
-	req, err := buildCreateProfileRequestFromTemplate(doc, "", "", false)
+	req, err := buildCreateProfileRequestFromTemplate(doc, "", "", nil)
 	if err != nil {
 		t.Fatalf("buildCreateProfileRequestFromTemplate returned error: %v", err)
 	}
@@ -230,7 +231,8 @@ func TestBuildCreateProfileRequestFromTemplateAppliesLocalOverrideAndInitializes
 		},
 	}
 
-	req, err := buildCreateProfileRequestFromTemplate(doc, "", "", true)
+	localOverride := true
+	req, err := buildCreateProfileRequestFromTemplate(doc, "", "", &localOverride)
 	if err != nil {
 		t.Fatalf("buildCreateProfileRequestFromTemplate returned error: %v", err)
 	}
@@ -245,6 +247,32 @@ func TestBuildCreateProfileRequestFromTemplateAppliesLocalOverrideAndInitializes
 	}
 }
 
+func TestBuildCreateProfileRequestFromTemplatePreservesTemplateLocalSettingWithoutOverride(t *testing.T) {
+	doc := &profileTemplateDocument{
+		Name: "Template Local",
+		MainParams: mlx.CreateProfileRequest{
+			Name:        "Template Local",
+			BrowserType: "mimic",
+			FolderID:    "folder-local",
+			OSType:      "windows",
+			Parameters: &mlx.ProfileParameters{
+				Storage: &mlx.Storage{IsLocal: true},
+			},
+		},
+	}
+
+	req, err := buildCreateProfileRequestFromTemplate(doc, "", "", nil)
+	if err != nil {
+		t.Fatalf("buildCreateProfileRequestFromTemplate returned error: %v", err)
+	}
+	if req.Parameters == nil || req.Parameters.Storage == nil {
+		t.Fatal("expected template storage settings to be preserved")
+	}
+	if !req.Parameters.Storage.IsLocal {
+		t.Fatal("expected template is_local=true to remain unchanged without an explicit override")
+	}
+}
+
 func TestBuildCreateProfileRequestFromTemplateRejectsMissingName(t *testing.T) {
 	doc := &profileTemplateDocument{
 		MainParams: mlx.CreateProfileRequest{
@@ -254,7 +282,7 @@ func TestBuildCreateProfileRequestFromTemplateRejectsMissingName(t *testing.T) {
 		},
 	}
 
-	_, err := buildCreateProfileRequestFromTemplate(doc, "", "", false)
+	_, err := buildCreateProfileRequestFromTemplate(doc, "", "", nil)
 	if err == nil {
 		t.Fatal("expected buildCreateProfileRequestFromTemplate to fail without a usable name")
 	}
@@ -273,7 +301,7 @@ func TestBuildCreateProfileRequestFromTemplateRejectsMissingFolderID(t *testing.
 		},
 	}
 
-	_, err := buildCreateProfileRequestFromTemplate(doc, "", "", false)
+	_, err := buildCreateProfileRequestFromTemplate(doc, "", "", nil)
 	if err == nil {
 		t.Fatal("expected buildCreateProfileRequestFromTemplate to fail without a folder id")
 	}
@@ -283,7 +311,7 @@ func TestBuildCreateProfileRequestFromTemplateRejectsMissingFolderID(t *testing.
 }
 
 func TestBuildCreateProfileRequestFromTemplateRejectsNilDocument(t *testing.T) {
-	_, err := buildCreateProfileRequestFromTemplate(nil, "Demo", "folder-1", false)
+	_, err := buildCreateProfileRequestFromTemplate(nil, "Demo", "folder-1", nil)
 	if err == nil {
 		t.Fatal("expected buildCreateProfileRequestFromTemplate to reject a nil document")
 	}

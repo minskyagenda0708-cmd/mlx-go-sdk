@@ -869,9 +869,9 @@ func runLauncherStart(args []string, global globalOptions) error {
 	profileName := fs.String("profile-name", "", "profile name")
 	folderID := fs.String("folder-id", "", "folder id")
 	automationType := fs.String("automation-type", "", "selenium|playwright|puppeteer|rod")
-	headless := fs.Bool("headless", false, "start headless")
-	strict := fs.Bool("strict", false, "enable strict mode")
-	wait := fs.Bool("wait", false, "wait for running status")
+	headless := newOptionalBoolFlag(fs, "headless", "start headless")
+	strict := newOptionalBoolFlag(fs, "strict", "enable strict mode")
+	wait := newOptionalBoolFlag(fs, "wait", "wait for running status")
 	help := fs.Bool("help", false, "show help")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -892,17 +892,20 @@ func runLauncherStart(args []string, global globalOptions) error {
 		if startAutomation == "" {
 			startAutomation = rt.Config.Defaults.Launcher.AutomationType
 		}
+		effectiveHeadless := headless.ValueOr(rt.Config.Defaults.Launcher.Headless)
+		effectiveStrict := strict.ValueOr(rt.Config.Defaults.Launcher.StrictMode)
+		effectiveWait := wait.ValueOr(rt.Config.Defaults.Launcher.WaitForRunning)
 		opts := mlx.StartProfileOptions{
 			AutomationType: mlx.AutomationType(startAutomation),
-			Headless:       *headless,
-			StrictMode:     *strict,
+			Headless:       effectiveHeadless,
+			StrictMode:     effectiveStrict,
 		}
 
 		if strings.TrimSpace(*profileName) != "" {
 			resp, err := rt.Client.Workflows.StartProfileByName(context.Background(), *profileName, mlx.StartProfileByNameOptions{
 				FindOptions:    buildFindOptions(rt.Config, *folderID),
 				StartOptions:   opts,
-				WaitForRunning: *wait,
+				WaitForRunning: effectiveWait,
 				PollOptions:    rt.Config.PollOptions(),
 			})
 			if err != nil {
@@ -919,7 +922,7 @@ func runLauncherStart(args []string, global globalOptions) error {
 		if err != nil {
 			return err
 		}
-		if !*wait {
+		if !effectiveWait {
 			return emit(rt, startResp)
 		}
 		statusResp, _, err := rt.Client.Launcher.WaitForRunning(context.Background(), profile.ID, rt.Config.PollOptions())
@@ -1147,7 +1150,7 @@ func runProfileCreate(args []string, global globalOptions) error {
 	templateID := fs.String("template-id", "", "profile template resource id")
 	name := fs.String("name", "", "profile name override for template-based creation")
 	folderID := fs.String("folder-id", "", "folder id override for template-based creation")
-	local := fs.Bool("local", false, "create a local profile from the template")
+	local := newOptionalBoolFlag(fs, "local", "create a local profile from the template")
 	managedProxy := fs.Bool("managed-proxy", false, "generate and attach an MLX managed proxy during template-based creation")
 	proxyCountry := fs.String("proxy-country", "", "proxy country code")
 	proxyRegion := fs.String("proxy-region", "", "proxy region")
@@ -1156,7 +1159,7 @@ func runProfileCreate(args []string, global globalOptions) error {
 	proxySessionType := fs.String("proxy-session-type", "", "proxy session type: sticky or rotating")
 	proxyIPTTL := fs.Int("proxy-ip-ttl", 0, "proxy IPTTL")
 	proxyStrict := fs.Bool("proxy-strict", false, "enable strict mode for managed proxy generation")
-	proxySaveTraffic := fs.Bool("proxy-save-traffic", false, "save traffic in the generated profile proxy")
+	proxySaveTraffic := newOptionalBoolFlag(fs, "proxy-save-traffic", "save traffic in the generated profile proxy")
 	wait := fs.Bool("wait", false, "verify created profile metas")
 	help := fs.Bool("help", false, "show help")
 	if err := fs.Parse(args); err != nil {
@@ -1203,7 +1206,7 @@ func runProfileCreate(args []string, global globalOptions) error {
 			if err != nil {
 				return err
 			}
-			templateReq, err := buildCreateProfileRequestFromTemplate(templateDoc, *name, resolvedFolderID, *local)
+			templateReq, err := buildCreateProfileRequestFromTemplate(templateDoc, *name, resolvedFolderID, local.BoolPtr())
 			if err != nil {
 				return err
 			}
@@ -1223,7 +1226,7 @@ func runProfileCreate(args []string, global globalOptions) error {
 						*proxyStrict,
 					),
 					PreferSOCKS5: strings.TrimSpace(*proxyProtocol) == "" && rt.Config.Defaults.Proxy.PreferSOCKS5,
-					SaveTraffic:  *proxySaveTraffic,
+					SaveTraffic:  proxySaveTraffic.ValueOr(rt.Config.Defaults.Proxy.SaveTraffic),
 				})
 				if err != nil {
 					return err
@@ -1516,8 +1519,8 @@ func runExportRun(args []string, global globalOptions) error {
 	rootDir := fs.String("root-dir", "", "export root dir")
 	folderName := fs.String("folder-name", "", "archive folder name override")
 	profileNameOverride := fs.String("profile-name-override", "", "archive profile name override")
-	stopBeforeExport := fs.Bool("stop-before-export", DefaultConfig().Defaults.Export.StopBeforeExport, "stop profile before export")
-	ignoreStopNotReady := fs.Bool("ignore-stop-not-ready", DefaultConfig().Defaults.Export.IgnoreStopNotReady, "ignore stop errors for not-ready profiles")
+	stopBeforeExport := newOptionalBoolFlag(fs, "stop-before-export", "stop profile before export")
+	ignoreStopNotReady := newOptionalBoolFlag(fs, "ignore-stop-not-ready", "ignore stop errors for not-ready profiles")
 	help := fs.Bool("help", false, "show help")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -1537,6 +1540,8 @@ func runExportRun(args []string, global globalOptions) error {
 	}
 
 	return withRuntime(global, func(rt *Runtime) error {
+		effectiveStopBeforeExport := stopBeforeExport.ValueOr(rt.Config.Defaults.Export.StopBeforeExport)
+		effectiveIgnoreStopNotReady := ignoreStopNotReady.ValueOr(rt.Config.Defaults.Export.IgnoreStopNotReady)
 		if strings.TrimSpace(*profileName) != "" {
 			resp, err := rt.Client.Workflows.ExportProfileByNameToFolder(context.Background(), *profileName, mlx.ExportProfileByNameToFolderOptions{
 				FindOptions: buildFindOptions(rt.Config, *folderID),
@@ -1547,8 +1552,8 @@ func runExportRun(args []string, global globalOptions) error {
 					PollInterval: rt.Config.Poll.InitialInterval.Duration(),
 					WaitTimeout:  rt.Config.Poll.Timeout.Duration(),
 				},
-				StopBeforeExport:   *stopBeforeExport,
-				IgnoreStopNotReady: *ignoreStopNotReady,
+				StopBeforeExport:   effectiveStopBeforeExport,
+				IgnoreStopNotReady: effectiveIgnoreStopNotReady,
 			})
 			if err != nil {
 				return err
@@ -1560,8 +1565,8 @@ func runExportRun(args []string, global globalOptions) error {
 		if err != nil {
 			return err
 		}
-		if *stopBeforeExport {
-			if _, _, err := rt.Client.Launcher.Stop(context.Background(), profile.ID); err != nil && !(*ignoreStopNotReady && isAlreadyStoppedError(err)) {
+		if effectiveStopBeforeExport {
+			if _, _, err := rt.Client.Launcher.Stop(context.Background(), profile.ID); err != nil && !(effectiveIgnoreStopNotReady && isAlreadyStoppedError(err)) {
 				return err
 			}
 		}
@@ -1655,8 +1660,8 @@ func runImportRun(args []string, global globalOptions) error {
 	fs := flag.NewFlagSet("import run", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	importPath := fs.String("import-path", "", "path to exported archive")
-	isLocal := fs.Bool("is-local", DefaultConfig().Defaults.Import.IsLocal, "import as local profile")
-	wait := fs.Bool("wait", DefaultConfig().Defaults.Import.Wait, "verify imported profile meta")
+	isLocal := newOptionalBoolFlag(fs, "is-local", "import as local profile")
+	wait := newOptionalBoolFlag(fs, "wait", "verify imported profile meta")
 	help := fs.Bool("help", false, "show help")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -1672,13 +1677,12 @@ func runImportRun(args []string, global globalOptions) error {
 		return errors.New("--import-path is required")
 	}
 
-	req := &mlx.ImportProfileRequest{
-		ImportPath: *importPath,
-		IsLocal:    *isLocal,
-	}
-
 	return withRuntime(global, func(rt *Runtime) error {
-		if *wait {
+		req := &mlx.ImportProfileRequest{
+			ImportPath: *importPath,
+			IsLocal:    isLocal.ValueOr(rt.Config.Defaults.Import.IsLocal),
+		}
+		if wait.ValueOr(rt.Config.Defaults.Import.Wait) {
 			resp, err := rt.Client.Workflows.ImportProfileAndVerify(context.Background(), req, mlx.ImportProfileWorkflowOptions{
 				PollOptions: rt.Config.PollOptions(),
 			})
@@ -1955,7 +1959,7 @@ func runExtensionEnable(args []string, global globalOptions) error {
 	profileID := fs.String("profile-id", "", "profile id")
 	profileName := fs.String("profile-name", "", "profile name")
 	folderID := fs.String("folder-id", "", "folder id for profile-name lookup")
-	requireProfileUsageRead := fs.Bool("require-profile-usage-read", DefaultConfig().Defaults.Extension.RequireProfileUsageRead, "require profile usage read verification")
+	requireProfileUsageRead := newOptionalBoolFlag(fs, "require-profile-usage-read", "require profile usage read verification")
 	help := fs.Bool("help", false, "show help")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -1975,11 +1979,12 @@ func runExtensionEnable(args []string, global globalOptions) error {
 	}
 
 	return withRuntime(global, func(rt *Runtime) error {
+		profileUsageReadRequired := requireProfileUsageRead.ValueOr(rt.Config.Defaults.Extension.RequireProfileUsageRead)
 		if strings.TrimSpace(*profileName) != "" {
 			resp, err := rt.Client.Workflows.EnableExtensionForProfileByName(context.Background(), *profileName, *resourceID, mlx.EnableExtensionForProfileByNameOptions{
 				FindOptions:             buildFindOptions(rt.Config, *folderID),
 				PollOptions:             rt.Config.PollOptions(),
-				RequireProfileUsageRead: *requireProfileUsageRead,
+				RequireProfileUsageRead: profileUsageReadRequired,
 			})
 			if err != nil {
 				return err
@@ -1998,10 +2003,16 @@ func runExtensionEnable(args []string, global globalOptions) error {
 			return err
 		}
 		usages, _, usageErr := rt.Client.Resources.ObjectProfileUsages(context.Background(), *resourceID)
+		profileUsages, _, profileUsageErr := rt.Client.Resources.ProfileExtensionUsages(context.Background(), profile.ID)
+		if profileUsageErr != nil && profileUsageReadRequired {
+			return profileUsageErr
+		}
 		return emit(rt, map[string]any{
 			"profile":         profile,
 			"enable_response": enableResp,
 			"object_usages":   usages,
+			"profile_usages":  profileUsages,
+			"profile_error":   errorString(profileUsageErr),
 			"usage_error":     errorString(usageErr),
 		})
 	})
@@ -2377,8 +2388,8 @@ func runCookiesImport(args []string, global globalOptions) error {
 	profileID := fs.String("profile-id", "", "profile id")
 	profileName := fs.String("profile-name", "", "profile name")
 	folderID := fs.String("folder-id", "", "launcher folder id")
-	advanced := fs.Bool("advanced", false, "import advanced pre-made cookies")
-	strict := fs.Bool("strict", false, "enable strict mode")
+	advanced := newOptionalBoolFlag(fs, "advanced", "import advanced pre-made cookies")
+	strict := newOptionalBoolFlag(fs, "strict", "enable strict mode")
 	cookiesFile := fs.String("cookies-file", "", "path to BrowserCookie array JSON")
 	help := fs.Bool("help", false, "show help")
 	if err := fs.Parse(args); err != nil {
@@ -2412,9 +2423,9 @@ func runCookiesImport(args []string, global globalOptions) error {
 		resp, _, err := rt.Client.Cookies.Import(context.Background(), &mlx.CookieImportRequest{
 			ProfileID:             profile.ID,
 			FolderID:              firstNonEmpty(*folderID, profile.FolderID),
-			ImportAdvancedCookies: *advanced,
+			ImportAdvancedCookies: advanced.ValueOr(rt.Config.Defaults.Cookies.ImportAdvancedCookies),
 			Cookies:               cookies,
-			StrictMode:            *strict,
+			StrictMode:            strict.ValueOr(rt.Config.Defaults.Cookies.StrictMode),
 		})
 		if err != nil {
 			return err
@@ -2468,9 +2479,9 @@ func runCookiesSeed(args []string, global globalOptions) error {
 	folderID := fs.String("folder-id", "", "launcher folder id")
 	targetWebsite := fs.String("target-website", "", "target website key")
 	additionalWebsite := fs.String("additional-website", "", "additional website key")
-	createMetadataIfMissing := fs.Bool("create-metadata-if-missing", DefaultConfig().Defaults.Cookies.CreateMetadataIfMissing, "create metadata if missing")
-	advanced := fs.Bool("advanced", DefaultConfig().Defaults.Cookies.ImportAdvancedCookies, "import advanced pre-made cookies")
-	strict := fs.Bool("strict", DefaultConfig().Defaults.Cookies.StrictMode, "enable strict mode")
+	createMetadataIfMissing := newOptionalBoolFlag(fs, "create-metadata-if-missing", "create metadata if missing")
+	advanced := newOptionalBoolFlag(fs, "advanced", "import advanced pre-made cookies")
+	strict := newOptionalBoolFlag(fs, "strict", "enable strict mode")
 	help := fs.Bool("help", false, "show help")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -2508,9 +2519,9 @@ func runCookiesSeed(args []string, global globalOptions) error {
 			FolderID:                firstNonEmpty(*folderID, profile.FolderID),
 			TargetWebsite:           target,
 			AdditionalWebsite:       additional,
-			CreateMetadataIfMissing: *createMetadataIfMissing,
-			StrictMode:              *strict,
-			ImportAdvancedCookies:   *advanced,
+			CreateMetadataIfMissing: createMetadataIfMissing.ValueOr(rt.Config.Defaults.Cookies.CreateMetadataIfMissing),
+			StrictMode:              strict.ValueOr(rt.Config.Defaults.Cookies.StrictMode),
+			ImportAdvancedCookies:   advanced.ValueOr(rt.Config.Defaults.Cookies.ImportAdvancedCookies),
 		})
 		if err != nil {
 			return err
@@ -2608,9 +2619,9 @@ func runProxyAssign(args []string, global globalOptions) error {
 	sessionType := fs.String("session-type", "", "sticky|rotating")
 	ipTTL := fs.Int("ip-ttl", 0, "IPTTL value")
 	strict := fs.Bool("strict", false, "enable strict mode")
-	preferSOCKS5 := fs.Bool("prefer-socks5", DefaultConfig().Defaults.Proxy.PreferSOCKS5, "prefer socks5 when protocol is not set")
-	saveTraffic := fs.Bool("save-traffic", DefaultConfig().Defaults.Proxy.SaveTraffic, "save traffic in generated profile proxy")
-	patchProfile := fs.Bool("patch-profile", DefaultConfig().Defaults.Proxy.PatchProfile, "patch profile with generated proxy")
+	preferSOCKS5 := newOptionalBoolFlag(fs, "prefer-socks5", "prefer socks5 when protocol is not set")
+	saveTraffic := newOptionalBoolFlag(fs, "save-traffic", "save traffic in generated profile proxy")
+	patchProfile := newOptionalBoolFlag(fs, "patch-profile", "patch profile with generated proxy")
 	help := fs.Bool("help", false, "show help")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -2627,17 +2638,18 @@ func runProxyAssign(args []string, global globalOptions) error {
 	}
 
 	return withRuntime(global, func(rt *Runtime) error {
+		effectivePatchProfile := patchProfile.ValueOr(rt.Config.Defaults.Proxy.PatchProfile)
 		generateReq := mlx.GenerateProfileProxyRequest{
 			GenerateProxyRequest: *buildGenerateProxyRequest(rt.Config, *country, *region, *city, *protocol, *sessionType, *ipTTL, 1, *strict),
-			PreferSOCKS5:         *preferSOCKS5,
-			SaveTraffic:          *saveTraffic,
+			PreferSOCKS5:         preferSOCKS5.ValueOr(rt.Config.Defaults.Proxy.PreferSOCKS5),
+			SaveTraffic:          saveTraffic.ValueOr(rt.Config.Defaults.Proxy.SaveTraffic),
 		}
 
 		if strings.TrimSpace(*profileName) != "" {
 			resp, err := rt.Client.Workflows.GenerateProfileProxyByName(context.Background(), *profileName, mlx.GenerateProfileProxyByNameOptions{
 				FindOptions:     buildFindOptions(rt.Config, *folderID),
 				GenerateOptions: generateReq,
-				PatchProfile:    *patchProfile,
+				PatchProfile:    effectivePatchProfile,
 			})
 			if err != nil {
 				return err
@@ -2655,7 +2667,7 @@ func runProxyAssign(args []string, global globalOptions) error {
 		}
 
 		var patchResp *mlx.EmptyDataResponse
-		if *patchProfile {
+		if effectivePatchProfile {
 			patchResp, _, err = rt.Client.Profiles.Patch(context.Background(), &mlx.PatchProfileRequest{
 				ProfileID: profile.ID,
 				Proxy:     generated.ProfileProxy,
@@ -3044,7 +3056,7 @@ func profileTemplateHasUsableMainParams(doc *profileTemplateDocument) bool {
 		len(main.Tags) != 0
 }
 
-func buildCreateProfileRequestFromTemplate(doc *profileTemplateDocument, name, folderID string, local bool) (*mlx.CreateProfileRequest, error) {
+func buildCreateProfileRequestFromTemplate(doc *profileTemplateDocument, name, folderID string, localOverride *bool) (*mlx.CreateProfileRequest, error) {
 	if doc == nil {
 		return nil, errors.New("template document is required")
 	}
@@ -3066,13 +3078,15 @@ func buildCreateProfileRequestFromTemplate(doc *profileTemplateDocument, name, f
 		return nil, errors.New("template does not contain a folder id and no --folder-id/default folder id was resolved")
 	}
 
-	if req.Parameters == nil {
-		req.Parameters = &mlx.ProfileParameters{}
+	if localOverride != nil {
+		if req.Parameters == nil {
+			req.Parameters = &mlx.ProfileParameters{}
+		}
+		if req.Parameters.Storage == nil {
+			req.Parameters.Storage = &mlx.Storage{}
+		}
+		req.Parameters.Storage.IsLocal = *localOverride
 	}
-	if req.Parameters.Storage == nil {
-		req.Parameters.Storage = &mlx.Storage{}
-	}
-	req.Parameters.Storage.IsLocal = local
 
 	return &req, nil
 }
@@ -3147,6 +3161,18 @@ func buildFindOptions(cfg Config, folderID string) *mlx.FindProfileOptions {
 }
 
 func buildGenerateProxyRequest(cfg Config, country, region, city, protocol, sessionType string, ipTTL, count int, strict bool) *mlx.GenerateProxyRequest {
+	effectiveCountry := strings.TrimSpace(country)
+	if effectiveCountry == "" {
+		effectiveCountry = strings.TrimSpace(cfg.Defaults.Proxy.Country)
+	}
+	effectiveRegion := strings.TrimSpace(region)
+	if effectiveRegion == "" {
+		effectiveRegion = strings.TrimSpace(cfg.Defaults.Proxy.Region)
+	}
+	effectiveCity := strings.TrimSpace(city)
+	if effectiveCity == "" {
+		effectiveCity = strings.TrimSpace(cfg.Defaults.Proxy.City)
+	}
 	effectiveProtocol := strings.TrimSpace(protocol)
 	if effectiveProtocol == "" {
 		effectiveProtocol = cfg.Defaults.Proxy.Protocol
@@ -3159,9 +3185,9 @@ func buildGenerateProxyRequest(cfg Config, country, region, city, protocol, sess
 		count = 1
 	}
 	return &mlx.GenerateProxyRequest{
-		Country:     strings.TrimSpace(country),
-		Region:      strings.TrimSpace(region),
-		City:        strings.TrimSpace(city),
+		Country:     effectiveCountry,
+		Region:      effectiveRegion,
+		City:        effectiveCity,
 		Protocol:    mlx.ProxyProtocol(effectiveProtocol),
 		SessionType: mlx.ProxySessionType(effectiveSessionType),
 		IPTTL:       ipTTL,

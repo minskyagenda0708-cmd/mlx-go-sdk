@@ -120,6 +120,28 @@ type RetryConfig struct {
 	MaxInterval     Duration `json:"max_interval"`
 	Multiplier      float64  `json:"multiplier"`
 	Jitter          float64  `json:"jitter"`
+
+	enabledExplicit bool
+}
+
+func (c *RetryConfig) UnmarshalJSON(data []byte) error {
+	type alias RetryConfig
+	current := alias(*c)
+	aux := struct {
+		Enabled *bool `json:"enabled"`
+		*alias
+	}{
+		alias: &current,
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*c = RetryConfig(current)
+	c.enabledExplicit = aux.Enabled != nil
+	if aux.Enabled != nil {
+		c.Enabled = *aux.Enabled
+	}
+	return nil
 }
 
 // PollConfig controls workflow polling behavior.
@@ -502,7 +524,7 @@ func (c Config) Normalize() Config {
 	if c.Retry.Jitter < 0 {
 		c.Retry.Jitter = def.Retry.Jitter
 	}
-	if !c.Retry.Enabled && isRetryUnset(c.Retry) {
+	if !c.Retry.Enabled && !c.Retry.enabledExplicit && isRetryUnset(c.Retry) {
 		c.Retry.Enabled = def.Retry.Enabled
 	}
 

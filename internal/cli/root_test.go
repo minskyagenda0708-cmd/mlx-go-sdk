@@ -105,3 +105,21 @@ func TestParseGlobalPreservesSubcommandHelpFlag(t *testing.T) {
 		t.Fatalf("unexpected remaining args: got %#v want %#v", rest, wantRest)
 	}
 }
+
+func TestBuildGenerateProxyRequestUsesConfiguredGeoDefaults(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Defaults.Proxy.Country = "us"
+	cfg.Defaults.Proxy.Region = "new_jersey"
+	cfg.Defaults.Proxy.City = "east_brunswick"
+
+	req := buildGenerateProxyRequest(cfg, "", "", "", "", "", 0, 0, false)
+	if req.Country != "us" {
+		t.Fatalf("expected default country, got %q", req.Country)
+	}
+	if req.Region != "new_jersey" {
+		t.Fatalf("expected default region, got %q", req.Region)
+	}
+	if req.City != "east_brunswick" {
+		t.Fatalf("expected default city, got %q", req.City)
+	}
+}

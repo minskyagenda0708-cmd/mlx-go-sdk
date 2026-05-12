@@ -138,6 +138,19 @@ func TestDecodeConfigMergesOverridesIntoBaseConfig(t *testing.T) {
 	}
 }
 
+func TestDecodeConfigPreservesExplicitRetryDisable(t *testing.T) {
+	cfg, err := DecodeConfig(strings.NewReader(`{"retry":{"enabled":false}}`), DefaultConfig())
+	if err != nil {
+		t.Fatalf("DecodeConfig returned error: %v", err)
+	}
+	if cfg.Retry.Enabled {
+		t.Fatal("expected explicit retry.enabled=false to remain disabled")
+	}
+	if len(cfg.ClientOptions()) != 2 {
+		t.Fatalf("expected client options to omit WithRetry when disabled, got %d options", len(cfg.ClientOptions()))
+	}
+}
+
 func TestDecodeConfigRejectsUnknownFields(t *testing.T) {
 	_, err := DecodeConfig(strings.NewReader(`{"unknown_key": true}`), DefaultConfig())
 	if err == nil {
