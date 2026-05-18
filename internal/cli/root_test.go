@@ -123,3 +123,27 @@ func TestBuildGenerateProxyRequestUsesConfiguredGeoDefaults(t *testing.T) {
 		t.Fatalf("expected default city, got %q", req.City)
 	}
 }
+
+func TestExecuteHelpTag(t *testing.T) {
+	if err := Execute([]string{"help", "tag"}); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+}
+
+func TestExecuteHelpLauncherQuickStart(t *testing.T) {
+	if err := Execute([]string{"help", "launcher"}); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+}
+
+func TestExecuteHelpProxyValidate(t *testing.T) {
+	if err := Execute([]string{"help", "proxy"}); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+}
+
+func TestExecuteHelpProfileCreateLocal(t *testing.T) {
+	if err := Execute([]string{"help", "profile"}); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+}

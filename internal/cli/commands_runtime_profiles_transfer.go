@@ -402,6 +402,10 @@ func runProfile(args []string, global globalOptions) error {
 		return runProfileGet(args[1:], global)
 	case "create":
 		return runProfileCreate(args[1:], global)
+	case "create-local":
+		return runProfileCreate(args[1:], global, true)
+	case "create-cloud":
+		return runProfileCreate(args[1:], global, false)
 	case "update":
 		return runProfileUpdate(args[1:], global)
 	case "patch":
@@ -514,7 +518,7 @@ func runProfileGet(args []string, global globalOptions) error {
 	})
 }
 
-func runProfileCreate(args []string, global globalOptions) error {
+func runProfileCreate(args []string, global globalOptions, forceLocal ...bool) error {
 	fs := flag.NewFlagSet("profile create", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	file := fs.String("file", "", "path to CreateProfileRequest JSON")
@@ -620,11 +624,15 @@ func runProfileCreate(args []string, global globalOptions) error {
 			if err != nil {
 				return err
 			}
+			effectiveLocal := local.BoolPtr()
+			if len(forceLocal) > 0 {
+				effectiveLocal = &forceLocal[0]
+			}
 			templateReq, err := buildCreateProfileRequestFromTemplate(
 				templateDoc,
 				*name,
 				resolvedFolderID,
-				local.BoolPtr(),
+				effectiveLocal,
 			)
 			if err != nil {
 				return err

@@ -89,6 +89,8 @@ func Execute(args []string) error {
 		return runCookies(subArgs, global)
 	case "proxy":
 		return runProxy(subArgs, global)
+	case "tag":
+		return runTag(subArgs, global)
 	default:
 		printRootHelp(os.Stdout)
 		return fmt.Errorf("unknown command %q", cmd)

@@ -460,6 +460,8 @@ func runProxy(args []string, global globalOptions) error {
 		return runProxyGenerate(args[1:], global)
 	case "assign":
 		return runProxyAssign(args[1:], global)
+	case "validate":
+		return runProxyValidate(args[1:], global)
 	default:
 		printProxyHelp(os.Stdout)
 		return fmt.Errorf("unknown proxy subcommand %q", args[0])
@@ -660,5 +662,51 @@ func runProxyAssign(args []string, global globalOptions) error {
 			"usage":          generated.Usage,
 			"patch_response": patchResp,
 		})
+	})
+}
+
+func runProxyValidate(args []string, global globalOptions) error {
+	fs := flag.NewFlagSet("proxy validate", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	proxyType := fs.String("type", "", "proxy type: http|socks5")
+	host := fs.String("host", "", "proxy host")
+	port := fs.Int("port", 0, "proxy port")
+	username := fs.String("username", "", "proxy username")
+	password := fs.String("password", "", "proxy password")
+	help := fs.Bool("help", false, "show help")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *help {
+		fmt.Fprintln(
+			os.Stdout,
+			"Usage: mlx proxy validate --type TYPE --host HOST --port PORT [--username USER] [--password PASS]",
+		)
+		return nil
+	}
+	if err := requireNoExtraArgs(fs.Args()); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*proxyType) == "" {
+		return errors.New("--type is required")
+	}
+	if strings.TrimSpace(*host) == "" {
+		return errors.New("--host is required")
+	}
+	if *port <= 0 {
+		return errors.New("--port must be greater than 0")
+	}
+	return withRuntime(global, func(rt *Runtime) error {
+		resp, _, err := rt.Client.Launcher.ValidateProxy(context.Background(), &mlx.ValidateProxyRequest{
+			Type:     *proxyType,
+			Host:     *host,
+			Port:     *port,
+			Username: *username,
+			Password: *password,
+		})
+		if err != nil {
+			return err
+		}
+		return emit(rt, resp)
 	})
 }

@@ -27,6 +27,8 @@ func printHelpForCommand(name string, w io.Writer) error {
 		printCookiesHelp(w)
 	case "proxy":
 		printProxyHelp(w)
+	case "tag":
+		printTagHelp(w)
 	default:
 		return fmt.Errorf("unknown command %q", name)
 	}
@@ -57,6 +59,7 @@ Commands:
   extension    Extension resource workflows
   cookies      Cookie metadata, import/export, and seeding
   proxy        Proxy usage, generation, and assignment
+  tag          Tag CRUD and assignment
   version      Print CLI version
   help         Show help for a command
 
@@ -73,6 +76,19 @@ Examples:
   mlx extension enable --id ext-1 --profile-name Demo
   mlx cookies seed --profile-name Demo --target-website google
   mlx proxy assign --profile-name Demo --country us --region new_jersey
+`)
+}
+
+func printTagHelp(w io.Writer) {
+	fmt.Fprint(w, `Usage:
+  mlx tag <subcommand> [flags]
+
+Subcommands:
+  create --name NAME [--color COLOR]
+  update --id ID [--name NAME] [--color COLOR]
+  remove --ids id1,id2,...
+  assign --tag-ids id1,id2,... --profile-ids pid1,pid2,...
+  search [--search TEXT] [--limit N] [--offset N] [--order-by FIELD] [--sort asc|desc]
 `)
 }
 
@@ -121,6 +137,8 @@ Subcommands:
   start --profile-id <id> | --profile-name <name> [--folder-id <id>] [--automation-type <type>] [--headless] [--strict] [--wait]
   stop --profile-id <id> | --profile-name <name> [--folder-id <id>] [--ignore-already-stopped] [--wait]
   stop-all [--type <cloud|local|quick>]
+  quick-start [--browser-type TYPE] [--os-type TYPE] [--automation-type TYPE] [--headless] [--core-version N] [--core-minor-version N] [--wait]
+  quick-save --profile-id ID
 `)
 }
 
@@ -133,6 +151,8 @@ Subcommands:
   get --id <id> | --name <name>
   create --file <request.json> [--wait]
   create --template-id <template-id> --name <name> [--folder-id <id>] [--local] [--managed-proxy] [--proxy-country <code>] [--proxy-region <name>] [--proxy-city <name>]
+  create-local --template-id <template-id> --name <name> [--folder-id <id>] [--managed-proxy] [--proxy-country <code>] [--proxy-region <name>] [--proxy-city <name>]
+  create-cloud --template-id <template-id> --name <name> [--folder-id <id>] [--managed-proxy] [--proxy-country <code>] [--proxy-region <name>] [--proxy-city <name>]
   update --file <request.json>
   patch --file <request.json>
   clone --id <id> | --name <name> [--times <n>]
@@ -207,5 +227,6 @@ Subcommands:
   usage
   generate [--country <code>] [--region <name>] [--city <name>] [--protocol <socks5|http>] [--session-type <sticky|rotating>] [--ip-ttl <seconds>] [--count <n>] [--strict]
   assign (--profile-id <id> | --profile-name <name>) [--folder-id <id>] [--country <code>] [--region <name>] [--city <name>] [--protocol <socks5|http>] [--session-type <sticky|rotating>] [--ip-ttl <seconds>] [--strict] [--prefer-socks5] [--save-traffic] [--patch-profile]
+  validate --type TYPE --host HOST --port PORT [--username USER] [--password PASS]
 `)
 }
