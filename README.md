@@ -1,11 +1,15 @@
 # mlx-go-sdk
 
+[![Go Version](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go)](https://go.dev/)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Tests](https://github.com/bath0ry/mlx-go-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/bath0ry/mlx-go-sdk/actions/workflows/ci.yml)
+
 Go SDK for Multilogin X with typed services for profiles, launcher control, cookies, resources, proxy generation, archive handling, retries, and verified high-level workflows.
 
 ## Install
 
 ```bash
-go get mlx-go-sdk
+go get github.com/bath0ry/mlx-go-sdk@latest
 ```
 
 ## Quick start
