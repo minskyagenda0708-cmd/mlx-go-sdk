@@ -1,0 +1,1280 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+
+	mlx "mlx-go-sdk"
+)
+
+func runLauncher(args []string, global globalOptions) error {
+	if len(args) == 0 {
+		printLauncherHelp(os.Stdout)
+		return nil
+	}
+
+	switch args[0] {
+	case "health":
+		return runLauncherHealth(args[1:], global)
+	case "version":
+		return runLauncherVersion(args[1:], global)
+	case "status":
+		return runLauncherStatus(args[1:], global)
+	case "statuses":
+		return runLauncherStatuses(args[1:], global)
+	case "start":
+		return runLauncherStart(args[1:], global)
+	case "stop":
+		return runLauncherStop(args[1:], global)
+	case "stop-all":
+		return runLauncherStopAll(args[1:], global)
+	default:
+		printLauncherHelp(os.Stdout)
+		return fmt.Errorf("unknown launcher subcommand %q", args[0])
+	}
+}
+
+func runLauncherHealth(args []string, global globalOptions) error {
+	fs := flag.NewFlagSet("launcher health", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	help := fs.Bool("help", false, "show help")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *help {
+		fmt.Fprintln(os.Stdout, "Usage: mlx launcher health")
+		return nil
+	}
+	if err := requireNoExtraArgs(fs.Args()); err != nil {
+		return err
+	}
+
+	return withRuntime(global, func(rt *Runtime) error {
+		resp, _, err := rt.Client.Launcher.Health(context.Background())
+		if err != nil {
+			return err
+		}
+
+		return emit(rt, resp.Data)
+	})
+}
+
+func runLauncherVersion(args []string, global globalOptions) error {
+	fs := flag.NewFlagSet("launcher version", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	help := fs.Bool("help", false, "show help")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *help {
+		fmt.Fprintln(os.Stdout, "Usage: mlx launcher version")
+		return nil
+	}
+	if err := requireNoExtraArgs(fs.Args()); err != nil {
+		return err
+	}
+
+	return withRuntime(global, func(rt *Runtime) error {
+		resp, _, err := rt.Client.Launcher.Version(context.Background())
+		if err != nil {
+			return err
+		}
+
+		return emit(rt, resp.Data)
+	})
+}
+
+func runLauncherStatus(args []string, global globalOptions) error {
+	fs := flag.NewFlagSet("launcher status", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	profileID := fs.String("profile-id", "", "profile id")
+	profileName := fs.String("profile-name", "", "profile name")
+	folderID := fs.String("folder-id", "", "folder id for profile-name lookup")
+	help := fs.Bool("help", false, "show help")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *help {
+		fmt.Fprintln(
+			os.Stdout,
+			"Usage: mlx launcher status --profile-id <id> | --profile-name <name>",
+		)
+		return nil
+	}
+	if err := requireNoExtraArgs(fs.Args()); err != nil {
+		return err
+	}
+	if err := validateSelector(
+		*profileID,
+		*profileName,
+		"--profile-id",
+		"--profile-name",
+	); err != nil {
+		return err
+	}
+
+	return withRuntime(global, func(rt *Runtime) error {
+		profile, err := resolveProfile(rt, *profileID, *profileName, *folderID)
+		if err != nil {
+			return err
+		}
+		resp, _, err := rt.Client.Launcher.Status(
+			context.Background(),
+			profile.ID,
+		)
+		if err != nil {
+			return err
+		}
+
+		return emit(rt, resp.Data)
+	})
+}
+
+func runLauncherStatuses(args []string, global globalOptions) error {
+	fs := flag.NewFlagSet("launcher statuses", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	help := fs.Bool("help", false, "show help")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *help {
+		fmt.Fprintln(os.Stdout, "Usage: mlx launcher statuses")
+		return nil
+	}
+	if err := requireNoExtraArgs(fs.Args()); err != nil {
+		return err
+	}
+
+	return withRuntime(global, func(rt *Runtime) error {
+		resp, _, err := rt.Client.Launcher.Statuses(context.Background())
+		if err != nil {
+			return err
+		}
+
+		return emit(rt, map[string]any{
+			"active_counter": resp.Data.ActiveCounter,
+			"states":         resp.Data.States,
+		})
+	})
+}
+
+func runLauncherStart(args []string, global globalOptions) error {
+	fs := flag.NewFlagSet("launcher start", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	profileID := fs.String("profile-id", "", "profile id")
+	profileName := fs.String("profile-name", "", "profile name")
+	folderID := fs.String("folder-id", "", "folder id")
+	automationType := fs.String(
+		"automation-type",
+		"",
+		"selenium|playwright|puppeteer|rod",
+	)
+	headless := newOptionalBoolFlag(fs, "headless", "start headless")
+	strict := newOptionalBoolFlag(fs, "strict", "enable strict mode")
+	wait := newOptionalBoolFlag(fs, "wait", "wait for running status")
+	help := fs.Bool("help", false, "show help")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *help {
+		fmt.Fprintln(
+			os.Stdout,
+			"Usage: mlx launcher start --profile-id <id> | --profile-name <name> [--folder-id <id>] [--automation-type <type>] [--headless] [--strict] [--wait]",
+		)
+		return nil
+	}
+	if err := requireNoExtraArgs(fs.Args()); err != nil {
+		return err
+	}
+	if err := validateSelector(
+		*profileID,
+		*profileName,
+		"--profile-id",
+		"--profile-name",
+	); err != nil {
+		return err
+	}
+
+	return withRuntime(global, func(rt *Runtime) error {
+		startAutomation := strings.TrimSpace(*automationType)
+		if startAutomation == "" {
+			startAutomation = rt.Config.Defaults.Launcher.AutomationType
+		}
+
+		effectiveHeadless := headless.ValueOr(rt.Config.Defaults.Launcher.Headless)
+		effectiveStrict := strict.ValueOr(rt.Config.Defaults.Launcher.StrictMode)
+		effectiveWait := wait.ValueOr(rt.Config.Defaults.Launcher.WaitForRunning)
+		opts := mlx.StartProfileOptions{
+			AutomationType: mlx.AutomationType(startAutomation),
+			Headless:       effectiveHeadless,
+			StrictMode:     effectiveStrict,
+		}
+
+		if strings.TrimSpace(*profileName) != "" {
+			resp, err := rt.Client.Workflows.StartProfileByName(
+				context.Background(),
+				*profileName,
+				mlx.StartProfileByNameOptions{
+					FindOptions:    buildFindOptions(rt.Config, *folderID),
+					StartOptions:   opts,
+					WaitForRunning: effectiveWait,
+					PollOptions:    rt.Config.PollOptions(),
+				},
+			)
+			if err != nil {
+				return err
+			}
+
+			return emit(rt, resp)
+		}
+
+		profile, err := resolveProfile(rt, *profileID, "", *folderID)
+		if err != nil {
+			return err
+		}
+		startResp, _, err := rt.Client.Launcher.Start(
+			context.Background(),
+			firstNonEmpty(*folderID, profile.FolderID),
+			profile.ID,
+			opts,
+		)
+		if err != nil {
+			return err
+		}
+		if !effectiveWait {
+			return emit(rt, startResp)
+		}
+
+		statusResp, _, err := rt.Client.Launcher.WaitForRunning(
+			context.Background(),
+			profile.ID,
+			rt.Config.PollOptions(),
+		)
+		if err != nil {
+			return err
+		}
+
+		return emit(rt, map[string]any{
+			"profile":         profile,
+			"start_response":  startResp,
+			"runtime_status":  statusResp,
+			"automation_type": startAutomation,
+		})
+	})
+}
+
+func runLauncherStop(args []string, global globalOptions) error {
+	fs := flag.NewFlagSet("launcher stop", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	profileID := fs.String("profile-id", "", "profile id")
+	profileName := fs.String("profile-name", "", "profile name")
+	folderID := fs.String("folder-id", "", "folder id for profile-name lookup")
+	ignoreAlreadyStopped := fs.Bool(
+		"ignore-already-stopped",
+		false,
+		"treat already-stopped errors as success",
+	)
+	wait := fs.Bool("wait", false, "wait for non-running status")
+	help := fs.Bool("help", false, "show help")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *help {
+		fmt.Fprintln(
+			os.Stdout,
+			"Usage: mlx launcher stop --profile-id <id> | --profile-name <name> [--folder-id <id>] [--ignore-already-stopped] [--wait]",
+		)
+		return nil
+	}
+	if err := requireNoExtraArgs(fs.Args()); err != nil {
+		return err
+	}
+	if err := validateSelector(
+		*profileID,
+		*profileName,
+		"--profile-id",
+		"--profile-name",
+	); err != nil {
+		return err
+	}
+
+	return withRuntime(global, func(rt *Runtime) error {
+		if strings.TrimSpace(*profileName) != "" {
+			resp, err := rt.Client.Workflows.StopProfileByName(
+				context.Background(),
+				*profileName,
+				mlx.StopProfileByNameOptions{
+					FindOptions:          buildFindOptions(rt.Config, *folderID),
+					IgnoreAlreadyStopped: *ignoreAlreadyStopped,
+					WaitForStopped:       *wait,
+					PollOptions:          rt.Config.PollOptions(),
+				},
+			)
+			if err != nil {
+				return err
+			}
+
+			return emit(rt, resp)
+		}
+
+		profile, err := resolveProfile(rt, *profileID, "", *folderID)
+		if err != nil {
+			return err
+		}
+		stopResp, _, err := rt.Client.Launcher.Stop(
+			context.Background(),
+			profile.ID,
+		)
+		if err != nil && !(*ignoreAlreadyStopped && isAlreadyStoppedError(err)) {
+			return err
+		}
+		if !*wait {
+			return emit(rt, map[string]any{
+				"profile":       profile,
+				"stop_response": stopResp,
+			})
+		}
+
+		statusResp, err := waitForStoppedStatus(
+			context.Background(),
+			rt,
+			profile.ID,
+		)
+		if err != nil {
+			return err
+		}
+
+		return emit(rt, map[string]any{
+			"profile":        profile,
+			"stop_response":  stopResp,
+			"runtime_status": statusResp,
+		})
+	})
+}
+
+func runLauncherStopAll(args []string, global globalOptions) error {
+	fs := flag.NewFlagSet("launcher stop-all", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	kind := fs.String("type", "", "optional stop-all type filter")
+	help := fs.Bool("help", false, "show help")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *help {
+		fmt.Fprintln(
+			os.Stdout,
+			"Usage: mlx launcher stop-all [--type <cloud|local|quick>]",
+		)
+		return nil
+	}
+	if err := requireNoExtraArgs(fs.Args()); err != nil {
+		return err
+	}
+
+	return withRuntime(global, func(rt *Runtime) error {
+		resp, _, err := rt.Client.Launcher.StopAll(
+			context.Background(),
+			mlx.StopAllProfilesOptions{Type: *kind},
+		)
+		if err != nil {
+			return err
+		}
+
+		return emit(rt, resp)
+	})
+}
+
+func runProfile(args []string, global globalOptions) error {
+	if len(args) == 0 {
+		printProfileHelp(os.Stdout)
+		return nil
+	}
+
+	switch args[0] {
+	case "list":
+		return runProfileList(args[1:], global)
+	case "get":
+		return runProfileGet(args[1:], global)
+	case "create":
+		return runProfileCreate(args[1:], global)
+	case "update":
+		return runProfileUpdate(args[1:], global)
+	case "patch":
+		return runProfilePatch(args[1:], global)
+	case "clone":
+		return runProfileClone(args[1:], global)
+	case "move":
+		return runProfileMove(args[1:], global)
+	case "delete":
+		return runProfileDelete(args[1:], global)
+	case "restore":
+		return runProfileRestore(args[1:], global)
+	case "summary":
+		return runProfileSummary(args[1:], global)
+	default:
+		printProfileHelp(os.Stdout)
+		return fmt.Errorf("unknown profile subcommand %q", args[0])
+	}
+}
+
+func runProfileList(args []string, global globalOptions) error {
+	fs := flag.NewFlagSet("profile list", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	search := fs.String("search", "", "search text")
+	removed := fs.Bool("removed", false, "search removed profiles")
+	limit := fs.Int("limit", 100, "page size")
+	offset := fs.Int("offset", 0, "page offset")
+	storageType := fs.String("storage-type", "", "all|local|cloud")
+	folderID := fs.String("folder-id", "", "folder id")
+	browserType := fs.String("browser-type", "", "browser type")
+	osType := fs.String("os-type", "", "os type")
+	orderBy := fs.String("order-by", "", "order by field")
+	sortOrder := fs.String("sort", "", "asc|desc")
+	tags := fs.String("tags", "", "comma-separated tags")
+	help := fs.Bool("help", false, "show help")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *help {
+		fmt.Fprintln(
+			os.Stdout,
+			"Usage: mlx profile list [--search <text>] [--removed] [--limit <n>] [--offset <n>] [--storage-type <all|local|cloud>]",
+		)
+		return nil
+	}
+	if err := requireNoExtraArgs(fs.Args()); err != nil {
+		return err
+	}
+
+	return withRuntime(global, func(rt *Runtime) error {
+		effectiveStorage := strings.TrimSpace(*storageType)
+		if effectiveStorage == "" {
+			effectiveStorage = rt.Config.Defaults.Profile.StorageType
+		}
+		resp, _, err := rt.Client.Profiles.Search(
+			context.Background(),
+			&mlx.SearchProfilesRequest{
+				IsRemoved:   *removed,
+				Limit:       *limit,
+				Offset:      *offset,
+				SearchText:  *search,
+				StorageType: effectiveStorage,
+				FolderID:    firstNonEmpty(*folderID, rt.Config.Defaults.Folder.ID),
+				BrowserType: *browserType,
+				OSType:      *osType,
+				OrderBy:     *orderBy,
+				Sort:        *sortOrder,
+				Tags:        splitCSV(*tags),
+			},
+		)
+		if err != nil {
+			return err
+		}
+
+		return emit(rt, map[string]any{
+			"total_count": resp.Data.TotalCount,
+			"profiles":    resp.Data.Profiles,
+		})
+	})
+}
+
+func runProfileGet(args []string, global globalOptions) error {
+	fs := flag.NewFlagSet("profile get", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	id := fs.String("id", "", "profile id")
+	name := fs.String("name", "", "profile name")
+	folderID := fs.String("folder-id", "", "folder id for name lookup")
+	help := fs.Bool("help", false, "show help")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *help {
+		fmt.Fprintln(os.Stdout, "Usage: mlx profile get --id <id> | --name <name>")
+		return nil
+	}
+	if err := requireNoExtraArgs(fs.Args()); err != nil {
+		return err
+	}
+	if err := validateSelector(*id, *name, "--id", "--name"); err != nil {
+		return err
+	}
+
+	return withRuntime(global, func(rt *Runtime) error {
+		profile, err := resolveProfile(rt, *id, *name, *folderID)
+		if err != nil {
+			return err
+		}
+
+		return emit(rt, profile.Meta)
+	})
+}
+
+func runProfileCreate(args []string, global globalOptions) error {
+	fs := flag.NewFlagSet("profile create", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	file := fs.String("file", "", "path to CreateProfileRequest JSON")
+	templateID := fs.String("template-id", "", "profile template resource id")
+	name := fs.String(
+		"name",
+		"",
+		"profile name override for template-based creation",
+	)
+	folderID := fs.String(
+		"folder-id",
+		"",
+		"folder id override for template-based creation",
+	)
+	local := newOptionalBoolFlag(
+		fs,
+		"local",
+		"create a local profile from the template",
+	)
+	managedProxy := fs.Bool(
+		"managed-proxy",
+		false,
+		"generate and attach an MLX managed proxy during template-based creation",
+	)
+	proxyCountry := fs.String("proxy-country", "", "proxy country code")
+	proxyRegion := fs.String("proxy-region", "", "proxy region")
+	proxyCity := fs.String("proxy-city", "", "proxy city")
+	proxyProtocol := fs.String(
+		"proxy-protocol",
+		"",
+		"proxy protocol: socks5 or http",
+	)
+	proxySessionType := fs.String(
+		"proxy-session-type",
+		"",
+		"proxy session type: sticky or rotating",
+	)
+	proxyIPTTL := fs.Int("proxy-ip-ttl", 0, "proxy IPTTL")
+	proxyStrict := fs.Bool(
+		"proxy-strict",
+		false,
+		"enable strict mode for managed proxy generation",
+	)
+	proxySaveTraffic := newOptionalBoolFlag(
+		fs,
+		"proxy-save-traffic",
+		"save traffic in the generated profile proxy",
+	)
+	wait := fs.Bool("wait", false, "verify created profile metas")
+	help := fs.Bool("help", false, "show help")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *help {
+		fmt.Fprintln(
+			os.Stdout,
+			"Usage: mlx profile create --file <request.json> [--wait]\n       mlx profile create --template-id <template-id> --name <name> [--folder-id <id>] [--local] [--managed-proxy] [--proxy-country <code>] [--proxy-region <name>] [--proxy-city <name>] [--wait]",
+		)
+		return nil
+	}
+	if err := requireNoExtraArgs(fs.Args()); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*file) != "" && strings.TrimSpace(*templateID) != "" {
+		return errors.New("--file and --template-id are mutually exclusive")
+	}
+	if strings.TrimSpace(*file) == "" && strings.TrimSpace(*templateID) == "" {
+		return errors.New("one of --file or --template-id is required")
+	}
+
+	var req mlx.CreateProfileRequest
+	usingTemplate := strings.TrimSpace(*templateID) != ""
+
+	return withRuntime(global, func(rt *Runtime) error {
+		if !usingTemplate {
+			if err := readJSONFile(*file, &req); err != nil {
+				return err
+			}
+		} else {
+			metaResp, _, err := rt.Client.Resources.GetMeta(
+				context.Background(),
+				*templateID,
+			)
+			if err != nil {
+				return err
+			}
+			downloadResp, _, err := rt.Client.Resources.Download(
+				context.Background(),
+				*templateID,
+			)
+			if err != nil {
+				return err
+			}
+			templateDoc, err := loadProfileTemplate(
+				metaResp.Data.MetaInfo,
+				downloadResp.Path,
+			)
+			if err != nil {
+				return err
+			}
+
+			resolvedFolderID, err := resolveFolderID(rt, *folderID)
+			if err != nil {
+				return err
+			}
+			templateReq, err := buildCreateProfileRequestFromTemplate(
+				templateDoc,
+				*name,
+				resolvedFolderID,
+				local.BoolPtr(),
+			)
+			if err != nil {
+				return err
+			}
+			req = *templateReq
+
+			if *managedProxy {
+				generated, err := rt.Client.Proxies.GenerateProfileProxy(
+					context.Background(),
+					&mlx.GenerateProfileProxyRequest{
+						GenerateProxyRequest: *buildGenerateProxyRequest(
+							rt.Config,
+							*proxyCountry,
+							*proxyRegion,
+							*proxyCity,
+							*proxyProtocol,
+							*proxySessionType,
+							*proxyIPTTL,
+							1,
+							*proxyStrict,
+						),
+						PreferSOCKS5: strings.TrimSpace(*proxyProtocol) == "" &&
+							rt.Config.Defaults.Proxy.PreferSOCKS5,
+						SaveTraffic: proxySaveTraffic.ValueOr(
+							rt.Config.Defaults.Proxy.SaveTraffic,
+						),
+					},
+				)
+				if err != nil {
+					return err
+				}
+				if req.Parameters == nil {
+					req.Parameters = &mlx.ProfileParameters{}
+				}
+				req.Parameters.Proxy = generated.ProfileProxy
+			}
+		}
+
+		if *wait {
+			resp, err := rt.Client.Workflows.CreateProfilesAndVerify(
+				context.Background(),
+				&req,
+				mlx.CreateProfilesAndVerifyOptions{
+					PollOptions: rt.Config.PollOptions(),
+				},
+			)
+			if err != nil {
+				return err
+			}
+			return emit(rt, resp)
+		}
+
+		resp, _, err := rt.Client.Profiles.Create(context.Background(), &req)
+		if err != nil {
+			return err
+		}
+
+		return emit(rt, resp)
+	})
+}
+
+func runProfileUpdate(args []string, global globalOptions) error {
+	fs := flag.NewFlagSet("profile update", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	file := fs.String("file", "", "path to UpdateProfileRequest JSON")
+	help := fs.Bool("help", false, "show help")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *help {
+		fmt.Fprintln(os.Stdout, "Usage: mlx profile update --file <request.json>")
+		return nil
+	}
+	if err := requireNoExtraArgs(fs.Args()); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*file) == "" {
+		return errors.New("--file is required")
+	}
+
+	var req mlx.UpdateProfileRequest
+	if err := readJSONFile(*file, &req); err != nil {
+		return err
+	}
+
+	return withRuntime(global, func(rt *Runtime) error {
+		resp, _, err := rt.Client.Profiles.Update(context.Background(), &req)
+		if err != nil {
+			return err
+		}
+
+		return emit(rt, resp)
+	})
+}
+
+func runProfilePatch(args []string, global globalOptions) error {
+	fs := flag.NewFlagSet("profile patch", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	file := fs.String("file", "", "path to PatchProfileRequest JSON")
+	help := fs.Bool("help", false, "show help")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *help {
+		fmt.Fprintln(os.Stdout, "Usage: mlx profile patch --file <request.json>")
+		return nil
+	}
+	if err := requireNoExtraArgs(fs.Args()); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*file) == "" {
+		return errors.New("--file is required")
+	}
+
+	var req mlx.PatchProfileRequest
+	if err := readJSONFile(*file, &req); err != nil {
+		return err
+	}
+
+	return withRuntime(global, func(rt *Runtime) error {
+		resp, _, err := rt.Client.Profiles.Patch(context.Background(), &req)
+		if err != nil {
+			return err
+		}
+
+		return emit(rt, resp)
+	})
+}
+
+func runProfileClone(args []string, global globalOptions) error {
+	fs := flag.NewFlagSet("profile clone", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	id := fs.String("id", "", "profile id")
+	name := fs.String("name", "", "profile name")
+	folderID := fs.String("folder-id", "", "folder id for name lookup")
+	times := fs.Int("times", 1, "clone count")
+	help := fs.Bool("help", false, "show help")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *help {
+		fmt.Fprintln(
+			os.Stdout,
+			"Usage: mlx profile clone --id <id> | --name <name> [--times <n>]",
+		)
+		return nil
+	}
+	if err := requireNoExtraArgs(fs.Args()); err != nil {
+		return err
+	}
+	if err := validateSelector(*id, *name, "--id", "--name"); err != nil {
+		return err
+	}
+
+	return withRuntime(global, func(rt *Runtime) error {
+		profile, err := resolveProfile(rt, *id, *name, *folderID)
+		if err != nil {
+			return err
+		}
+		resp, _, err := rt.Client.Profiles.Clone(
+			context.Background(),
+			&mlx.CloneProfileRequest{
+				ProfileID: profile.ID,
+				Times:     *times,
+			},
+		)
+		if err != nil {
+			return err
+		}
+
+		return emit(rt, resp)
+	})
+}
+
+func runProfileMove(args []string, global globalOptions) error {
+	fs := flag.NewFlagSet("profile move", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	ids := fs.String("ids", "", "comma-separated profile ids")
+	destFolderID := fs.String("dest-folder-id", "", "destination folder id")
+	help := fs.Bool("help", false, "show help")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *help {
+		fmt.Fprintln(
+			os.Stdout,
+			"Usage: mlx profile move --ids <id1,id2,...> --dest-folder-id <folder-id>",
+		)
+		return nil
+	}
+	if err := requireNoExtraArgs(fs.Args()); err != nil {
+		return err
+	}
+	idList := splitCSV(*ids)
+	if len(idList) == 0 {
+		return errors.New("--ids is required")
+	}
+	if strings.TrimSpace(*destFolderID) == "" {
+		return errors.New("--dest-folder-id is required")
+	}
+
+	return withRuntime(global, func(rt *Runtime) error {
+		resp, _, err := rt.Client.Profiles.Move(
+			context.Background(),
+			&mlx.MoveProfilesRequest{
+				DestinationFolderID: *destFolderID,
+				IDs:                 idList,
+			},
+		)
+		if err != nil {
+			return err
+		}
+
+		return emit(rt, resp)
+	})
+}
+
+func runProfileDelete(args []string, global globalOptions) error {
+	fs := flag.NewFlagSet("profile delete", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	ids := fs.String("ids", "", "comma-separated profile ids")
+	permanently := fs.Bool("permanently", false, "permanent delete")
+	help := fs.Bool("help", false, "show help")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *help {
+		fmt.Fprintln(
+			os.Stdout,
+			"Usage: mlx profile delete --ids <id1,id2,...> [--permanently]",
+		)
+		return nil
+	}
+	if err := requireNoExtraArgs(fs.Args()); err != nil {
+		return err
+	}
+	idList := splitCSV(*ids)
+	if len(idList) == 0 {
+		return errors.New("--ids is required")
+	}
+
+	return withRuntime(global, func(rt *Runtime) error {
+		resp, _, err := rt.Client.Profiles.Delete(
+			context.Background(),
+			&mlx.DeleteProfilesRequest{
+				IDs:         idList,
+				Permanently: *permanently,
+			},
+		)
+		if err != nil {
+			return err
+		}
+
+		return emit(rt, resp)
+	})
+}
+
+func runProfileRestore(args []string, global globalOptions) error {
+	fs := flag.NewFlagSet("profile restore", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	ids := fs.String("ids", "", "comma-separated profile ids")
+	help := fs.Bool("help", false, "show help")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *help {
+		fmt.Fprintln(os.Stdout, "Usage: mlx profile restore --ids <id1,id2,...>")
+		return nil
+	}
+	if err := requireNoExtraArgs(fs.Args()); err != nil {
+		return err
+	}
+	idList := splitCSV(*ids)
+	if len(idList) == 0 {
+		return errors.New("--ids is required")
+	}
+
+	return withRuntime(global, func(rt *Runtime) error {
+		resp, _, err := rt.Client.Profiles.Restore(
+			context.Background(),
+			&mlx.RestoreProfilesRequest{IDs: idList},
+		)
+		if err != nil {
+			return err
+		}
+
+		return emit(rt, resp)
+	})
+}
+
+func runProfileSummary(args []string, global globalOptions) error {
+	fs := flag.NewFlagSet("profile summary", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	id := fs.String("id", "", "profile id")
+	name := fs.String("name", "", "profile name")
+	folderID := fs.String("folder-id", "", "folder id for name lookup")
+	help := fs.Bool("help", false, "show help")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *help {
+		fmt.Fprintln(
+			os.Stdout,
+			"Usage: mlx profile summary --id <id> | --name <name>",
+		)
+		return nil
+	}
+	if err := requireNoExtraArgs(fs.Args()); err != nil {
+		return err
+	}
+	if err := validateSelector(*id, *name, "--id", "--name"); err != nil {
+		return err
+	}
+
+	return withRuntime(global, func(rt *Runtime) error {
+		profile, err := resolveProfile(rt, *id, *name, *folderID)
+		if err != nil {
+			return err
+		}
+		resp, _, err := rt.Client.Profiles.GetSummary(
+			context.Background(),
+			profile.ID,
+		)
+		if err != nil {
+			return err
+		}
+
+		return emit(rt, resp.Data)
+	})
+}
+
+func runExport(args []string, global globalOptions) error {
+	if len(args) == 0 {
+		printExportHelp(os.Stdout)
+		return nil
+	}
+
+	switch args[0] {
+	case "run":
+		return runExportRun(args[1:], global)
+	case "status":
+		return runExportStatus(args[1:], global)
+	case "statuses":
+		return runExportStatuses(args[1:], global)
+	default:
+		printExportHelp(os.Stdout)
+		return fmt.Errorf("unknown export subcommand %q", args[0])
+	}
+}
+
+func runExportRun(args []string, global globalOptions) error {
+	fs := flag.NewFlagSet("export run", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	profileID := fs.String("profile-id", "", "profile id")
+	profileName := fs.String("profile-name", "", "profile name")
+	folderID := fs.String("folder-id", "", "folder id for profile-name lookup")
+	rootDir := fs.String("root-dir", "", "export root dir")
+	folderName := fs.String("folder-name", "", "archive folder name override")
+	profileNameOverride := fs.String(
+		"profile-name-override",
+		"",
+		"archive profile name override",
+	)
+	stopBeforeExport := newOptionalBoolFlag(
+		fs,
+		"stop-before-export",
+		"stop profile before export",
+	)
+	ignoreStopNotReady := newOptionalBoolFlag(
+		fs,
+		"ignore-stop-not-ready",
+		"ignore stop errors for not-ready profiles",
+	)
+	help := fs.Bool("help", false, "show help")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *help {
+		fmt.Fprintln(
+			os.Stdout,
+			"Usage: mlx export run --root-dir <dir> (--profile-id <id> | --profile-name <name>) [--folder-id <id>] [--folder-name <name>] [--profile-name-override <name>] [--stop-before-export] [--ignore-stop-not-ready]",
+		)
+		return nil
+	}
+	if err := requireNoExtraArgs(fs.Args()); err != nil {
+		return err
+	}
+	if err := validateSelector(
+		*profileID,
+		*profileName,
+		"--profile-id",
+		"--profile-name",
+	); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*rootDir) == "" {
+		return errors.New("--root-dir is required")
+	}
+
+	return withRuntime(global, func(rt *Runtime) error {
+		effectiveStopBeforeExport := stopBeforeExport.ValueOr(
+			rt.Config.Defaults.Export.StopBeforeExport,
+		)
+		effectiveIgnoreStopNotReady := ignoreStopNotReady.ValueOr(
+			rt.Config.Defaults.Export.IgnoreStopNotReady,
+		)
+		if strings.TrimSpace(*profileName) != "" {
+			resp, err := rt.Client.Workflows.ExportProfileByNameToFolder(
+				context.Background(),
+				*profileName,
+				mlx.ExportProfileByNameToFolderOptions{
+					FindOptions: buildFindOptions(rt.Config, *folderID),
+					ExportOptions: mlx.ExportProfileToFolderOptions{
+						RootDir:      *rootDir,
+						FolderName:   *folderName,
+						ProfileName:  *profileNameOverride,
+						PollInterval: rt.Config.Poll.InitialInterval.Duration(),
+						WaitTimeout:  rt.Config.Poll.Timeout.Duration(),
+					},
+					StopBeforeExport:   effectiveStopBeforeExport,
+					IgnoreStopNotReady: effectiveIgnoreStopNotReady,
+				},
+			)
+			if err != nil {
+				return err
+			}
+
+			return emit(rt, resp)
+		}
+
+		profile, err := resolveProfile(rt, *profileID, "", *folderID)
+		if err != nil {
+			return err
+		}
+		if effectiveStopBeforeExport {
+			_, _, stopErr := rt.Client.Launcher.Stop(
+				context.Background(),
+				profile.ID,
+			)
+			if stopErr != nil &&
+				!(effectiveIgnoreStopNotReady && isAlreadyStoppedError(stopErr)) {
+				return stopErr
+			}
+		}
+		profileNameForArchive := firstNonEmpty(*profileNameOverride, profile.Name)
+		resp, err := rt.Client.Archives.ExportProfileToFolder(
+			context.Background(),
+			profile.ID,
+			mlx.ExportProfileToFolderOptions{
+				RootDir:      *rootDir,
+				FolderName:   *folderName,
+				ProfileName:  profileNameForArchive,
+				PollInterval: rt.Config.Poll.InitialInterval.Duration(),
+				WaitTimeout:  rt.Config.Poll.Timeout.Duration(),
+			},
+		)
+		if err != nil {
+			return err
+		}
+
+		return emit(rt, resp)
+	})
+}
+
+func runExportStatus(args []string, global globalOptions) error {
+	fs := flag.NewFlagSet("export status", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	exportID := fs.String("export-id", "", "export id")
+	help := fs.Bool("help", false, "show help")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *help {
+		fmt.Fprintln(os.Stdout, "Usage: mlx export status --export-id <id>")
+		return nil
+	}
+	if err := requireNoExtraArgs(fs.Args()); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*exportID) == "" {
+		return errors.New("--export-id is required")
+	}
+
+	return withRuntime(global, func(rt *Runtime) error {
+		resp, _, err := rt.Client.Transfers.ExportStatus(
+			context.Background(),
+			*exportID,
+		)
+		if err != nil {
+			return err
+		}
+
+		return emit(rt, resp.Data)
+	})
+}
+
+func runExportStatuses(args []string, global globalOptions) error {
+	fs := flag.NewFlagSet("export statuses", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	help := fs.Bool("help", false, "show help")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *help {
+		fmt.Fprintln(os.Stdout, "Usage: mlx export statuses")
+		return nil
+	}
+	if err := requireNoExtraArgs(fs.Args()); err != nil {
+		return err
+	}
+
+	return withRuntime(global, func(rt *Runtime) error {
+		resp, _, err := rt.Client.Transfers.ExportStatuses(
+			context.Background(),
+		)
+		if err != nil {
+			return err
+		}
+
+		return emit(rt, resp.Data.Statuses)
+	})
+}
+
+func runImport(args []string, global globalOptions) error {
+	if len(args) == 0 {
+		printImportHelp(os.Stdout)
+		return nil
+	}
+
+	switch args[0] {
+	case "run":
+		return runImportRun(args[1:], global)
+	case "status":
+		return runImportStatus(args[1:], global)
+	case "statuses":
+		return runImportStatuses(args[1:], global)
+	default:
+		printImportHelp(os.Stdout)
+		return fmt.Errorf("unknown import subcommand %q", args[0])
+	}
+}
+
+func runImportRun(args []string, global globalOptions) error {
+	fs := flag.NewFlagSet("import run", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	importPath := fs.String("import-path", "", "path to exported archive")
+	isLocal := newOptionalBoolFlag(fs, "is-local", "import as local profile")
+	wait := newOptionalBoolFlag(fs, "wait", "verify imported profile meta")
+	help := fs.Bool("help", false, "show help")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *help {
+		fmt.Fprintln(
+			os.Stdout,
+			"Usage: mlx import run --import-path <archive.zip> [--is-local] [--wait]",
+		)
+		return nil
+	}
+	if err := requireNoExtraArgs(fs.Args()); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*importPath) == "" {
+		return errors.New("--import-path is required")
+	}
+
+	return withRuntime(global, func(rt *Runtime) error {
+		req := &mlx.ImportProfileRequest{
+			ImportPath: *importPath,
+			IsLocal:    isLocal.ValueOr(rt.Config.Defaults.Import.IsLocal),
+		}
+		if wait.ValueOr(rt.Config.Defaults.Import.Wait) {
+			resp, err := rt.Client.Workflows.ImportProfileAndVerify(
+				context.Background(),
+				req,
+				mlx.ImportProfileWorkflowOptions{
+					PollOptions: rt.Config.PollOptions(),
+				},
+			)
+			if err != nil {
+				return err
+			}
+
+			return emit(rt, resp)
+		}
+
+		resp, _, err := rt.Client.Transfers.Import(context.Background(), req)
+		if err != nil {
+			return err
+		}
+
+		return emit(rt, resp)
+	})
+}
+
+func runImportStatus(args []string, global globalOptions) error {
+	fs := flag.NewFlagSet("import status", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	importID := fs.String("import-id", "", "import id")
+	help := fs.Bool("help", false, "show help")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *help {
+		fmt.Fprintln(os.Stdout, "Usage: mlx import status --import-id <id>")
+		return nil
+	}
+	if err := requireNoExtraArgs(fs.Args()); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*importID) == "" {
+		return errors.New("--import-id is required")
+	}
+
+	return withRuntime(global, func(rt *Runtime) error {
+		resp, _, err := rt.Client.Transfers.ImportStatus(
+			context.Background(),
+			*importID,
+		)
+		if err != nil {
+			return err
+		}
+
+		return emit(rt, resp.Data)
+	})
+}
+
+func runImportStatuses(args []string, global globalOptions) error {
+	fs := flag.NewFlagSet("import statuses", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	help := fs.Bool("help", false, "show help")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *help {
+		fmt.Fprintln(os.Stdout, "Usage: mlx import statuses")
+		return nil
+	}
+	if err := requireNoExtraArgs(fs.Args()); err != nil {
+		return err
+	}
+
+	return withRuntime(global, func(rt *Runtime) error {
+		resp, _, err := rt.Client.Transfers.ImportStatuses(
+			context.Background(),
+		)
+		if err != nil {
+			return err
+		}
+
+		return emit(rt, resp.Data.Statuses)
+	})
+}
