@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -57,6 +59,99 @@ func TestWorkflowStartProfileByName(t *testing.T) {
 	}
 	if result.RuntimeStatus == nil || result.RuntimeStatus.Data.Status != "browser_running" {
 		t.Fatalf("unexpected runtime status: %#v", result.RuntimeStatus)
+	}
+}
+
+func TestWorkflowStartProfileAutomationByName(t *testing.T) {
+	cdpPort := ""
+	cdpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/json/version" {
+			t.Fatalf("unexpected cdp path: %s", r.URL.Path)
+		}
+		fmt.Fprintf(w, `{"webSocketDebuggerUrl":"ws://127.0.0.1:%s/devtools/browser/demo"}`, cdpPort)
+	}))
+	t.Cleanup(cdpServer.Close)
+
+	cdpURL, err := url.Parse(cdpServer.URL)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	cdpPort = cdpURL.Port()
+
+	statusCalls := 0
+	server, httpClient := testutil.NewServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/profile/search":
+			fmt.Fprint(w, `{"status":{"http_code":200,"message":""},"data":{"profiles":[{"id":"profile-1","name":"Demo","folder_id":"folder-1","browser_type":"mimic","os_type":"windows","core_version":137,"notes":"","created_by":"me@example.com","in_use_by":"","last_launched_by":"","is_local":false}],"total_count":1}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/profile/metas":
+			fmt.Fprintf(w, `{"status":{"http_code":200,"message":""},"data":{"profiles":[%s]}}`, verifiedProfileMetaJSON("profile-1", "Demo", "folder-1"))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v2/profile/f/folder-1/p/profile-1/start":
+			if got := r.URL.Query().Get("automation_type"); got != "playwright" {
+				t.Fatalf("expected normalized automation_type=playwright, got %q", got)
+			}
+			fmt.Fprintf(w, `{"status":{"http_code":200,"message":"ok"},"data":{"browser_type":"mimic","core_version":137,"id":"profile-1","is_quick":false,"port":"%s"}}`, cdpURL.Port())
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/profile/status/p/profile-1":
+			statusCalls++
+			status := "starting"
+			if statusCalls > 1 {
+				status = "browser_running"
+			}
+			fmt.Fprintf(w, `{"status":{"http_code":200,"message":""},"data":{"profile_id":"profile-1","name":"Demo","status":%q,"browser_type":"mimic","core_version":137,"folder_id":"folder-1","workspace_id":"workspace-1","message":"","timestamp":1745100000000}}`, status)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	client, err := mlx.New(
+		mlx.WithToken("test-token"),
+		mlx.WithHTTPClient(httpClient),
+		mlx.WithBaseURL(server.URL),
+		mlx.WithLauncherURL(server.URL),
+	)
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+
+	result, err := client.Workflows.StartProfileAutomationByName(context.Background(), "Demo", mlx.StartProfileAutomationByNameOptions{
+		StartOptions: mlx.StartProfileOptions{
+			AutomationType: mlx.AutomationRod,
+		},
+		WaitForRunning: true,
+		PollOptions:    mlx.PollOptions{InitialInterval: time.Millisecond, MaxInterval: time.Millisecond, Timeout: time.Second},
+	})
+	if err != nil {
+		t.Fatalf("Workflows.StartProfileAutomationByName returned error: %v", err)
+	}
+	if result.Profile.ID != "profile-1" {
+		t.Fatalf("unexpected profile id: %s", result.Profile.ID)
+	}
+	if result.StartResponse == nil || result.StartResponse.Data.Port != cdpURL.Port() {
+		t.Fatalf("unexpected start response: %#v", result.StartResponse)
+	}
+	if result.StartResponse.Data.RequestedAutomation != mlx.AutomationRod {
+		t.Fatalf("unexpected requested automation in start response: %q", result.StartResponse.Data.RequestedAutomation)
+	}
+	if result.StartResponse.Data.LauncherAutomation != mlx.AutomationPlaywright {
+		t.Fatalf("unexpected launcher automation in start response: %q", result.StartResponse.Data.LauncherAutomation)
+	}
+	if result.RuntimeStatus == nil || result.RuntimeStatus.Data.Status != "browser_running" {
+		t.Fatalf("unexpected runtime status: %#v", result.RuntimeStatus)
+	}
+	if result.RequestedAutomation != mlx.AutomationRod {
+		t.Fatalf("unexpected requested automation: %q", result.RequestedAutomation)
+	}
+	if result.LauncherAutomation != mlx.AutomationPlaywright {
+		t.Fatalf("unexpected launcher automation: %q", result.LauncherAutomation)
+	}
+	if result.CDPPort != cdpURL.Port() {
+		t.Fatalf("unexpected cdp port: %q", result.CDPPort)
+	}
+	wantCDPURL := fmt.Sprintf("ws://127.0.0.1:%s/devtools/browser/demo", cdpURL.Port())
+	if result.CDPWebSocketURL != wantCDPURL {
+		t.Fatalf("unexpected cdp websocket url: got %q want %q", result.CDPWebSocketURL, wantCDPURL)
+	}
+	if result.RodControlURL != wantCDPURL {
+		t.Fatalf("unexpected rod control url: got %q want %q", result.RodControlURL, wantCDPURL)
 	}
 }
 

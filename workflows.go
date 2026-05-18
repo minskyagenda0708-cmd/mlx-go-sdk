@@ -11,6 +11,7 @@ import (
 type WorkflowService interface {
 	CreateProfilesAndVerify(context.Context, *CreateProfileRequest, CreateProfilesAndVerifyOptions) (*CreatedProfilesWorkflowResult, error)
 	FindProfileByNameVerified(context.Context, string, FindProfileByNameVerifiedOptions) (*VerifiedProfileWorkflowResult, error)
+	StartProfileAutomationByName(context.Context, string, StartProfileAutomationByNameOptions) (*StartedProfileAutomationWorkflowResult, error)
 	StartProfileByName(context.Context, string, StartProfileByNameOptions) (*StartedProfileWorkflowResult, error)
 	StartProfilesByName(context.Context, []string, StartProfileByNameOptions) (*BatchResult[StartedProfileWorkflowResult], error)
 	StopProfileByName(context.Context, string, StopProfileByNameOptions) (*StoppedProfileWorkflowResult, error)
@@ -58,11 +59,31 @@ type StartProfileByNameOptions struct {
 	PollOptions    PollOptions
 }
 
+// StartProfileAutomationByNameOptions controls lookup, automation normalization, and endpoint resolution.
+type StartProfileAutomationByNameOptions struct {
+	FindOptions    *FindProfileOptions
+	StartOptions   StartProfileOptions
+	WaitForRunning bool
+	PollOptions    PollOptions
+}
+
 // StartedProfileWorkflowResult contains the resolved profile and launcher results.
 type StartedProfileWorkflowResult struct {
 	Profile       *Profile
 	StartResponse *StartProfileResponse
 	RuntimeStatus *ProfileRuntimeStatusResponse
+}
+
+// StartedProfileAutomationWorkflowResult contains the resolved profile, launcher results, and CDP endpoints.
+type StartedProfileAutomationWorkflowResult struct {
+	Profile             *Profile
+	StartResponse       *StartProfileResponse
+	RuntimeStatus       *ProfileRuntimeStatusResponse
+	RequestedAutomation AutomationType
+	LauncherAutomation  AutomationType
+	CDPPort             string
+	CDPWebSocketURL     string
+	RodControlURL       string
 }
 
 // StopProfileByNameOptions controls the lookup used before stopping a profile.
@@ -187,6 +208,44 @@ func (s *WorkflowServiceOp) StartProfileByName(ctx context.Context, profileName 
 	result := &StartedProfileWorkflowResult{
 		Profile:       profile,
 		StartResponse: startResp,
+	}
+	if opts.WaitForRunning {
+		statusResp, _, err := s.client.Launcher.WaitForRunning(ctx, profile.ID, opts.PollOptions)
+		if err != nil {
+			return nil, err
+		}
+		result.RuntimeStatus = statusResp
+	}
+	return result, nil
+}
+
+// StartProfileAutomationByName resolves a profile by exact name, starts it with automation normalization, and returns resolved CDP endpoints.
+func (s *WorkflowServiceOp) StartProfileAutomationByName(ctx context.Context, profileName string, opts StartProfileAutomationByNameOptions) (*StartedProfileAutomationWorkflowResult, error) {
+	verified, err := s.FindProfileByNameVerified(ctx, profileName, FindProfileByNameVerifiedOptions{FindOptions: opts.FindOptions})
+	if err != nil {
+		return nil, err
+	}
+	profile := verified.Profile
+	startResp, _, err := s.client.Launcher.Start(ctx, profile.FolderID, profile.ID, opts.StartOptions)
+	if err != nil {
+		return nil, err
+	}
+	cdpWebSocketURL, err := startResp.Data.ResolveCDPWebSocketURL(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rodControlURL, err := startResp.Data.ResolveRodControlURL(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := &StartedProfileAutomationWorkflowResult{
+		Profile:             profile,
+		StartResponse:       startResp,
+		RequestedAutomation: startResp.Data.RequestedAutomation,
+		LauncherAutomation:  startResp.Data.LauncherAutomation,
+		CDPPort:             startResp.Data.CDPPort,
+		CDPWebSocketURL:     cdpWebSocketURL,
+		RodControlURL:       rodControlURL,
 	}
 	if opts.WaitForRunning {
 		statusResp, _, err := s.client.Launcher.WaitForRunning(ctx, profile.ID, opts.PollOptions)
