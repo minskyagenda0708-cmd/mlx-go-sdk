@@ -230,22 +230,11 @@ func (s *WorkflowServiceOp) StartProfileAutomationByName(ctx context.Context, pr
 	if err != nil {
 		return nil, err
 	}
-	cdpWebSocketURL, err := startResp.Data.ResolveCDPWebSocketURL(ctx)
-	if err != nil {
-		return nil, err
-	}
-	rodControlURL, err := startResp.Data.ResolveRodControlURL(ctx)
-	if err != nil {
-		return nil, err
-	}
 	result := &StartedProfileAutomationWorkflowResult{
 		Profile:             profile,
 		StartResponse:       startResp,
 		RequestedAutomation: startResp.Data.RequestedAutomation,
 		LauncherAutomation:  startResp.Data.LauncherAutomation,
-		CDPPort:             startResp.Data.CDPPort,
-		CDPWebSocketURL:     cdpWebSocketURL,
-		RodControlURL:       rodControlURL,
 	}
 	if opts.WaitForRunning {
 		statusResp, _, err := s.client.Launcher.WaitForRunning(ctx, profile.ID, opts.PollOptions)
@@ -254,6 +243,13 @@ func (s *WorkflowServiceOp) StartProfileAutomationByName(ctx context.Context, pr
 		}
 		result.RuntimeStatus = statusResp
 	}
+	cdpWebSocketURL, err := startResp.Data.ResolveCDPWebSocketURL(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result.CDPPort = startResp.Data.CDPPort
+	result.CDPWebSocketURL = cdpWebSocketURL
+	result.RodControlURL = cdpWebSocketURL
 	return result, nil
 }
 

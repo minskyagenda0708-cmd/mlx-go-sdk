@@ -64,9 +64,20 @@ func TestWorkflowStartProfileByName(t *testing.T) {
 
 func TestWorkflowStartProfileAutomationByName(t *testing.T) {
 	cdpPort := ""
+	cdpCalls := 0
+	statusCalls := 0
 	cdpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/json/version" {
 			t.Fatalf("unexpected cdp path: %s", r.URL.Path)
+		}
+		cdpCalls++
+		if cdpCalls > 1 {
+			t.Fatalf("expected CDP endpoint to be resolved once, got %d calls", cdpCalls)
+		}
+		if statusCalls < 2 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprint(w, `{"message":"not ready"}`)
+			return
 		}
 		fmt.Fprintf(w, `{"webSocketDebuggerUrl":"ws://127.0.0.1:%s/devtools/browser/demo"}`, cdpPort)
 	}))
@@ -78,7 +89,6 @@ func TestWorkflowStartProfileAutomationByName(t *testing.T) {
 	}
 	cdpPort = cdpURL.Port()
 
-	statusCalls := 0
 	server, httpClient := testutil.NewServer(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/profile/search":
@@ -152,6 +162,9 @@ func TestWorkflowStartProfileAutomationByName(t *testing.T) {
 	}
 	if result.RodControlURL != wantCDPURL {
 		t.Fatalf("unexpected rod control url: got %q want %q", result.RodControlURL, wantCDPURL)
+	}
+	if cdpCalls != 1 {
+		t.Fatalf("expected a single CDP probe, got %d", cdpCalls)
 	}
 }
 
