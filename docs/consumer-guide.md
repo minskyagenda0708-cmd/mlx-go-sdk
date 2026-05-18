@@ -94,9 +94,25 @@ fmt.Println("verified profiles:", len(created.Profiles))
 
 ## Rod attachment
 
-Use the Rod guide in `docs/rod-example.md`.
+Use the Rod guide in `docs/rod-example.md`. The SDK now owns the Rod-to-Playwright normalization, so consumers should request `AutomationRod` and use the resolved control URL from the start result or workflow helper.
 
-Important live note: `automation_type=rod` may start a profile but still return an empty port. A practical production fallback is launching with Playwright and then attaching Rod to the returned DevTools endpoint.
+```go
+result, err := client.Workflows.StartProfileAutomationByName(ctx, "Demo", mlx.StartProfileAutomationByNameOptions{
+    StartOptions: mlx.StartProfileOptions{
+        AutomationType: mlx.AutomationRod,
+    },
+    WaitForRunning: true,
+})
+if err != nil {
+    return err
+}
+
+browser := rod.New().
+    ControlURL(result.RodControlURL).
+    NoDefaultDevice()
+```
+
+`result.RequestedAutomation` stays `rod`, while the launcher automation is normalized to `playwright` and the SDK resolves the Rod control URL for you.
 
 ## Local profile handling
 
@@ -232,7 +248,7 @@ Use `client.Archives` or export workflows for archive organization rather than a
 
 Examples:
 
-- Rod starts may require a Playwright fallback for port discovery
+- Rod automation should request `AutomationRod` and use the SDK-resolved control URL instead of reimplementing launcher fallback logic
 - extension profile-usage reads may be weaker than object-usage reads
 - local profile semantics should not depend on the raw top-level meta flag
 - proxy retention should use parsed affinity metadata rather than assuming identical regenerated credentials

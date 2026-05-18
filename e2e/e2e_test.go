@@ -17,7 +17,6 @@ import (
 	. "mlx-go-sdk"
 
 	"github.com/go-rod/rod"
-	rodlauncher "github.com/go-rod/rod/lib/launcher"
 )
 
 func TestE2ELauncherHealth(t *testing.T) {
@@ -216,27 +215,47 @@ func TestE2ERodConnection(t *testing.T) {
 		_, _, _ = client.Profiles.Delete(ctx, &DeleteProfilesRequest{IDs: []string{profileID}, Permanently: true})
 	}()
 
-	started, _, err := client.Launcher.Start(ctx, folderID, profileID, StartProfileOptions{AutomationType: AutomationRod})
+	started, err := client.Workflows.StartProfileAutomationByName(ctx, profileName, StartProfileAutomationByNameOptions{
+		FindOptions: &FindProfileOptions{
+			FolderID:    folderID,
+			StorageType: "all",
+		},
+		StartOptions:   StartProfileOptions{AutomationType: AutomationRod},
+		WaitForRunning: true,
+		PollOptions:    PollOptions{InitialInterval: 500 * time.Millisecond, MaxInterval: 2 * time.Second, Timeout: 60 * time.Second},
+	})
 	if err != nil {
-		t.Fatalf("Launcher.Start returned error: %v", err)
-	}
-	selectedAutomation := AutomationRod
-	if strings.TrimSpace(started.Data.Port) == "" {
-		t.Log("launcher returned empty port for automation_type=rod; retrying with automation_type=playwright and attaching Rod to the resulting DevTools endpoint")
-		_, _, _ = client.Launcher.Stop(ctx, profileID)
-		started, _, err = client.Launcher.Start(ctx, folderID, profileID, StartProfileOptions{AutomationType: AutomationPlaywright})
-		if err != nil {
-			t.Fatalf("Launcher.Start playwright fallback returned error: %v", err)
-		}
-		selectedAutomation = AutomationPlaywright
-	}
-	if strings.TrimSpace(started.Data.Port) == "" {
-		t.Fatal("expected launcher start to return a usable cdp port")
+		t.Fatalf("Workflows.StartProfileAutomationByName returned error: %v", err)
 	}
 
-	controlURL, err := rodlauncher.ResolveURL(started.Data.Port)
+	if started.Profile.ID != profileID {
+		t.Fatalf("unexpected profile id: %s", started.Profile.ID)
+	}
+	if started.RequestedAutomation != AutomationRod {
+		t.Fatalf("unexpected requested automation: %q", started.RequestedAutomation)
+	}
+	if started.LauncherAutomation != AutomationPlaywright {
+		t.Fatalf("expected rod automation to normalize to playwright, got %q", started.LauncherAutomation)
+	}
+	if started.StartResponse == nil {
+		t.Fatal("expected workflow to include a start response")
+	}
+	if strings.TrimSpace(started.CDPPort) == "" {
+		t.Fatal("expected workflow to return a usable cdp port")
+	}
+	if started.CDPWebSocketURL == "" {
+		t.Fatal("expected workflow to resolve a cdp websocket url")
+	}
+	if started.RodControlURL != started.CDPWebSocketURL {
+		t.Fatalf("expected rod control url to match cdp websocket url, got rod=%q cdp=%q", started.RodControlURL, started.CDPWebSocketURL)
+	}
+
+	controlURL, err := started.StartResponse.Data.ResolveRodControlURL(ctx)
 	if err != nil {
-		t.Fatalf("rod launcher.ResolveURL returned error: %v", err)
+		t.Fatalf("ResolveRodControlURL returned error: %v", err)
+	}
+	if controlURL != started.RodControlURL {
+		t.Fatalf("expected resolved rod control url %q to match workflow result %q", controlURL, started.RodControlURL)
 	}
 
 	browser := rod.New().ControlURL(controlURL).NoDefaultDevice()
@@ -256,7 +275,7 @@ func TestE2ERodConnection(t *testing.T) {
 		t.Fatal("expected rod page info")
 	}
 
-	t.Logf("rod connection ok: profile=%s automation=%s port=%s control_url=%s target=%s url=%s", profileID, selectedAutomation, started.Data.Port, controlURL, info.TargetID, info.URL)
+	t.Logf("rod connection ok: profile=%s requested=%s launcher=%s port=%s control_url=%s target=%s url=%s", profileID, started.RequestedAutomation, started.LauncherAutomation, started.CDPPort, controlURL, info.TargetID, info.URL)
 }
 
 func TestE2EProfileLifecycle(t *testing.T) {

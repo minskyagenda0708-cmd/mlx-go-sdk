@@ -81,7 +81,7 @@ The CLI is intentionally scoped to config/folder/template/profile/launcher/expor
 - `docs/cli-config.md` — CLI config schema, precedence rules, and defaults
 - `docs/verified-workflows.md` — verified create/find/start/stop/import/export/extension flows
 - `docs/batch-helpers.md` — multi-profile workflow helpers with aggregated errors
-- `docs/rod-example.md` — Rod attachment flow and port fallback note
+- `docs/rod-example.md` — Rod attachment flow using SDK automation helpers
 - `docs/extensions.md` — extension upload and attach workflows
 - `docs/proxy-workflows.md` — managed MLX proxy generation and patching
 - `docs/retries.md` — retry and error classification behavior
