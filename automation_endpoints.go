@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -119,7 +120,13 @@ func (d *StartedProfileData) ResolveCDPWebSocketURL(ctx context.Context) (string
 		)
 	}
 
-	return wsURL, nil
+	parsed, err := url.Parse(wsURL)
+	if err != nil {
+		return "", d.newAutomationEndpointError(port, "parse webSocketDebuggerUrl", err)
+	}
+	parsed.Host = fmt.Sprintf("127.0.0.1:%s", port)
+
+	return parsed.String(), nil
 }
 
 func (d *StartedProfileData) ResolveRodControlURL(ctx context.Context) (string, error) {

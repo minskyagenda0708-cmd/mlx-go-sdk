@@ -56,6 +56,29 @@ func TestStartedProfileDataResolveCDPWebSocketURL(t *testing.T) {
 	}
 }
 
+func TestStartedProfileDataResolveCDPWebSocketURLNormalizesHost(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/json/version" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+
+		port := mustPortFromURL(t, "http://"+r.Host)
+		fmt.Fprintf(w, `{"webSocketDebuggerUrl":"ws://example.com:%s/devtools/browser/ghi789"}`, port)
+	}))
+	t.Cleanup(server.Close)
+
+	data := &StartedProfileData{Port: mustPortFromURL(t, server.URL)}
+	got, err := data.ResolveCDPWebSocketURL(context.Background())
+	if err != nil {
+		t.Fatalf("ResolveCDPWebSocketURL returned error: %v", err)
+	}
+
+	want := fmt.Sprintf("ws://127.0.0.1:%s/devtools/browser/ghi789", data.Port)
+	if got != want {
+		t.Fatalf("unexpected normalized cdp websocket url: got %q want %q", got, want)
+	}
+}
+
 func TestStartedProfileDataResolveCDPWebSocketURLEmptyPort(t *testing.T) {
 	data := &StartedProfileData{
 		RequestedAutomation: AutomationRod,
