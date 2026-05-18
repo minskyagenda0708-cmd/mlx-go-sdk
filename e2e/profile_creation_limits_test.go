@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/bath0ry/mlx-go-sdk"
+	. "github.com/minskyagenda0708-cmd/mlx-go-sdk"
 )
 
 const (

@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/bath0ry/mlx-go-sdk/internal/testutil"
+	"github.com/minskyagenda0708-cmd/mlx-go-sdk/internal/testutil"
 )
 
 func TestCookiesListWebsites(t *testing.T) {

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	mlx "github.com/bath0ry/mlx-go-sdk"
+	mlx "github.com/minskyagenda0708-cmd/mlx-go-sdk"
 )
 
 const (
@@ -27,7 +27,7 @@ const (
 	// EnvUserAgent overrides the configured user agent.
 	EnvUserAgent = "MLX_USER_AGENT"
 
-	defaultConfigSubdir   = "github.com/bath0ry/mlx-go-sdk"
+	defaultConfigSubdir   = "github.com/minskyagenda0708-cmd/mlx-go-sdk"
 	defaultConfigFileName = "config.json"
 
 	outputFormatTable = "table"

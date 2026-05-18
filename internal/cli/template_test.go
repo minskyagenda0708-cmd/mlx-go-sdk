@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	mlx "github.com/bath0ry/mlx-go-sdk"
+	mlx "github.com/minskyagenda0708-cmd/mlx-go-sdk"
 )
 
 func TestLoadProfileTemplatePrefersDownloadedBodyWhenUsable(t *testing.T) {

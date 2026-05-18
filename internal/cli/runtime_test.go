@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	mlx "github.com/bath0ry/mlx-go-sdk"
+	mlx "github.com/minskyagenda0708-cmd/mlx-go-sdk"
 )
 
 const testFoldersListResponse = `{"status":{"http_code":200,"message":""},"data":{"folders":[{"folder_id":"folder-1","name":"Default folder","comment":"","profiles_count":1,"created_at":"2026-04-20T00:00:00Z"}]}}`

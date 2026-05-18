@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/bath0ry/mlx-go-sdk"
+	. "github.com/minskyagenda0708-cmd/mlx-go-sdk"
 
 	"github.com/go-rod/rod"
 )
@@ -1276,7 +1276,7 @@ func createE2EExtensionArchive(t *testing.T, name string) string {
 	if err != nil {
 		t.Fatalf("create manifest.json entry: %v", err)
 	}
-	manifestBody := fmt.Sprintf(`{"manifest_version":3,"name":"%s","version":"1.0.0","action":{"default_title":"github.com/bath0ry/mlx-go-sdk"}}`, name)
+	manifestBody := fmt.Sprintf(`{"manifest_version":3,"name":"%s","version":"1.0.0","action":{"default_title":"github.com/minskyagenda0708-cmd/mlx-go-sdk"}}`, name)
 	if _, err := manifest.Write([]byte(manifestBody)); err != nil {
 		t.Fatalf("write manifest.json: %v", err)
 	}

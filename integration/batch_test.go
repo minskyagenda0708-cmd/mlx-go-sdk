@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	mlx "github.com/bath0ry/mlx-go-sdk"
-	"github.com/bath0ry/mlx-go-sdk/internal/testutil"
+	mlx "github.com/minskyagenda0708-cmd/mlx-go-sdk"
+	"github.com/minskyagenda0708-cmd/mlx-go-sdk/internal/testutil"
 )
 
 func TestWorkflowBatchStartProfilesByName(t *testing.T) {

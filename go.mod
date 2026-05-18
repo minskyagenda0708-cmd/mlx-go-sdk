@@ -1,4 +1,4 @@
-module github.com/bath0ry/mlx-go-sdk
+module github.com/minskyagenda0708-cmd/mlx-go-sdk
 
 go 1.26
 
