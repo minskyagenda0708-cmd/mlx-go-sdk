@@ -29,6 +29,7 @@ func main() {
         log.Fatalf("create client: %v", err)
     }
 
+    folderID := "your-folder-id"
     profileName := "your-profile-name"
 
     started, err := client.Workflows.StartProfileAutomationByName(ctx, profileName, mlx.StartProfileAutomationByNameOptions{
@@ -45,9 +46,7 @@ func main() {
         log.Fatalf("start profile: %v", err)
     }
     defer func() {
-        _, err := client.Workflows.StopProfileByName(ctx, profileName, mlx.StopProfileByNameOptions{
-            WaitForStopped: true,
-        })
+        _, _, err := client.Launcher.Stop(ctx, started.Profile.ID)
         if err != nil {
             log.Printf("stop profile: %v", err)
         }
