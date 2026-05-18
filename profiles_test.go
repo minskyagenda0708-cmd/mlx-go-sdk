@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"mlx-go-sdk/internal/testutil"
+	"github.com/bath0ry/mlx-go-sdk/internal/testutil"
 )
 
 func TestProfilesSearch(t *testing.T) {

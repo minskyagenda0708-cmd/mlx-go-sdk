@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	mlx "mlx-go-sdk"
+	mlx "github.com/bath0ry/mlx-go-sdk"
 )
 
 func TestDefaultConfigProvidesNormalizedDefaults(t *testing.T) {

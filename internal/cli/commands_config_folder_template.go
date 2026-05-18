@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	mlx "mlx-go-sdk"
+	mlx "github.com/bath0ry/mlx-go-sdk"
 )
 
 func runConfig(args []string, global globalOptions) error {

@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	mlx "mlx-go-sdk"
+	mlx "github.com/bath0ry/mlx-go-sdk"
 )
 
 const CLIVersion = "dev"

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"mlx-go-sdk/internal/testutil"
+	"github.com/bath0ry/mlx-go-sdk/internal/testutil"
 )
 
 func TestResourcesListTypes(t *testing.T) {

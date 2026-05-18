@@ -3,7 +3,7 @@ package mlx_test
 import (
 	"fmt"
 
-	mlx "mlx-go-sdk"
+	mlx "github.com/bath0ry/mlx-go-sdk"
 )
 
 func ExampleBuildProfileProxyFromGenerated() {

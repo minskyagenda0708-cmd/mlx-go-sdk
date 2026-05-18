@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	. "mlx-go-sdk"
+	. "github.com/bath0ry/mlx-go-sdk"
 )
 
 const (

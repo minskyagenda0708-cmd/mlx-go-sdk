@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"mlx-go-sdk/internal/testutil"
+	"github.com/bath0ry/mlx-go-sdk/internal/testutil"
 )
 
 func TestArchiveManagerOrganizePreservesZipName(t *testing.T) {

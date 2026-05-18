@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	mlx "mlx-go-sdk"
+	mlx "github.com/bath0ry/mlx-go-sdk"
 )
 
 func TestExecuteTemplateListJSONOutput(t *testing.T) {

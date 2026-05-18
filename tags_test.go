@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"testing"
 
-	"mlx-go-sdk/internal/testutil"
+	"github.com/bath0ry/mlx-go-sdk/internal/testutil"
 )
 
 func TestTagsCreate(t *testing.T) {
