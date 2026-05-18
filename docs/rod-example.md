@@ -4,7 +4,7 @@ Use Rod to attach to a Multilogin X profile that was launched by the local launc
 
 > Important: always call `NoDefaultDevice()` before connecting. Rod applies a default device profile unless you disable it, and that extra emulation can distort the Multilogin fingerprint.
 
-`AutomationRod` is a semantic alias backed by launcher `playwright`. The SDK requests `playwright` from the launcher, then resolves the DevTools endpoint for Rod through the helper methods on the started profile response.
+`AutomationRod` is a semantic alias backed by launcher `playwright`. The workflow helper requests `playwright` from the launcher, waits for the profile to report running, and returns the Rod-compatible control URL from the started profile response.
 
 ## Example
 
@@ -29,26 +29,28 @@ func main() {
         log.Fatalf("create client: %v", err)
     }
 
-    folderID := "your-folder-id"
-    profileID := "your-profile-id"
+    profileName := "your-profile-name"
 
-    started, _, err := client.Launcher.Start(ctx, folderID, profileID, mlx.StartProfileOptions{
-        AutomationType: mlx.AutomationRod,
+    started, err := client.Workflows.StartProfileAutomationByName(ctx, profileName, mlx.StartProfileAutomationByNameOptions{
+        StartOptions: mlx.StartProfileOptions{
+            AutomationType: mlx.AutomationRod,
+        },
+        WaitForRunning: true,
     })
     if err != nil {
         log.Fatalf("start profile: %v", err)
     }
     defer func() {
-        _, _, _ = client.Launcher.Stop(ctx, profileID)
+        _, err := client.Workflows.StopProfileByName(ctx, profileName, mlx.StopProfileByNameOptions{
+            WaitForStopped: true,
+        })
+        if err != nil {
+            log.Printf("stop profile: %v", err)
+        }
     }()
 
-    controlURL, err := started.Data.ResolveRodControlURL(ctx)
-    if err != nil {
-        log.Fatalf("resolve rod control url: %v", err)
-    }
-
     browser := rod.New().
-        ControlURL(controlURL).
+        ControlURL(started.RodControlURL).
         NoDefaultDevice().
         MustConnect()
 
@@ -65,7 +67,8 @@ func main() {
 
 ## Notes
 
-- `started.Data.ResolveRodControlURL(ctx)` converts the launcher response into the full WebSocket debugger URL Rod needs.
+- `client.Workflows.StartProfileAutomationByName(..., WaitForRunning: true)` waits for the profile to be ready before exposing the Rod control URL.
+- `started.RodControlURL` is the full WebSocket debugger URL Rod needs.
 - `NoDefaultDevice()` is required to avoid Rod's built-in device emulation altering the Multilogin browser fingerprint.
 - `AutomationRod` requests the Rod semantic alias while the SDK normalizes the launcher call to `playwright`.
 - Close the Rod page when finished, then stop the Multilogin profile through the SDK.
