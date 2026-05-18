@@ -8,5 +8,15 @@
 # Local agent/editor state
 .claude/
 
+# Superpowers dev tooling
+.windsurf/
+skills-lock.json
+
+# Firecrawl MCP leftovers
+.firecrawl/
+
+# Local agent instructions (not for public repo)
+AGENTS.md
+
 # Large external reference repos kept outside local history
 GithubExamples/
