@@ -26,6 +26,7 @@ type Client struct {
 	Cookies   CookiesService
 	Resources ResourcesService
 	Workflows WorkflowService
+	Tags      TagsService
 }
 
 type stringableURL interface {
@@ -79,6 +80,7 @@ func New(opts ...Option) (*Client, error) {
 	c.Cookies = &CookiesServiceOp{client: c}
 	c.Resources = &ResourcesServiceOp{client: c}
 	c.Workflows = &WorkflowServiceOp{client: c}
+	c.Tags = &TagsServiceOp{client: c}
 
 	return c, nil
 }

@@ -621,3 +621,83 @@ func TestWorkflowEnableExtensionForProfileByName(t *testing.T) {
 		t.Fatalf("expected profile usage confirmation, got %#v", result.ProfileUsages)
 	}
 }
+
+func TestWorkflowCreateLocalProfile(t *testing.T) {
+	var capturedBody string
+	server, httpClient := testutil.NewServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/profile/create":
+			capturedBody = readRequestBody(t, r)
+			fmt.Fprint(w, `{"status":{"http_code":200,"message":""},"data":{"ids":["profile-local-1"]}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/profile/metas":
+			fmt.Fprintf(w, `{"status":{"http_code":200,"message":""},"data":{"profiles":[%s]}}`, verifiedProfileMetaJSON("profile-local-1", "LocalDemo", "folder-1"))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	client, err := mlx.New(
+		mlx.WithToken("test-token"),
+		mlx.WithHTTPClient(httpClient),
+		mlx.WithBaseURL(server.URL),
+	)
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+
+	result, err := client.Workflows.CreateLocalProfile(context.Background(), &mlx.CreateProfileRequest{
+		Name:        "LocalDemo",
+		BrowserType: "mimic",
+		FolderID:    "folder-1",
+		OSType:      "windows",
+	}, mlx.CreateProfilesAndVerifyOptions{})
+	if err != nil {
+		t.Fatalf("Workflows.CreateLocalProfile returned error: %v", err)
+	}
+	if result.CreateResponse.Data.IDs[0] != "profile-local-1" {
+		t.Fatalf("unexpected profile id: %s", result.CreateResponse.Data.IDs[0])
+	}
+	if !contains(capturedBody, `"is_local":true`) {
+		t.Fatalf("expected local profile request to contain is_local=true, got: %s", capturedBody)
+	}
+}
+
+func TestWorkflowCreateCloudProfile(t *testing.T) {
+	var capturedBody string
+	server, httpClient := testutil.NewServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/profile/create":
+			capturedBody = readRequestBody(t, r)
+			fmt.Fprint(w, `{"status":{"http_code":200,"message":""},"data":{"ids":["profile-cloud-1"]}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/profile/metas":
+			fmt.Fprintf(w, `{"status":{"http_code":200,"message":""},"data":{"profiles":[%s]}}`, verifiedProfileMetaJSON("profile-cloud-1", "CloudDemo", "folder-1"))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	client, err := mlx.New(
+		mlx.WithToken("test-token"),
+		mlx.WithHTTPClient(httpClient),
+		mlx.WithBaseURL(server.URL),
+	)
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+
+	result, err := client.Workflows.CreateCloudProfile(context.Background(), &mlx.CreateProfileRequest{
+		Name:        "CloudDemo",
+		BrowserType: "mimic",
+		FolderID:    "folder-1",
+		OSType:      "windows",
+	}, mlx.CreateProfilesAndVerifyOptions{})
+	if err != nil {
+		t.Fatalf("Workflows.CreateCloudProfile returned error: %v", err)
+	}
+	if result.CreateResponse.Data.IDs[0] != "profile-cloud-1" {
+		t.Fatalf("unexpected profile id: %s", result.CreateResponse.Data.IDs[0])
+	}
+	if !contains(capturedBody, `"is_local":false`) {
+		t.Fatalf("expected cloud profile request to contain is_local=false, got: %s", capturedBody)
+	}
+}

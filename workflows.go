@@ -10,6 +10,8 @@ import (
 // WorkflowService provides higher-level helpers that combine multiple SDK calls.
 type WorkflowService interface {
 	CreateProfilesAndVerify(context.Context, *CreateProfileRequest, CreateProfilesAndVerifyOptions) (*CreatedProfilesWorkflowResult, error)
+	CreateLocalProfile(context.Context, *CreateProfileRequest, CreateProfilesAndVerifyOptions) (*CreatedProfilesWorkflowResult, error)
+	CreateCloudProfile(context.Context, *CreateProfileRequest, CreateProfilesAndVerifyOptions) (*CreatedProfilesWorkflowResult, error)
 	FindProfileByNameVerified(context.Context, string, FindProfileByNameVerifiedOptions) (*VerifiedProfileWorkflowResult, error)
 	StartProfileAutomationByName(context.Context, string, StartProfileAutomationByNameOptions) (*StartedProfileAutomationWorkflowResult, error)
 	StartProfileByName(context.Context, string, StartProfileByNameOptions) (*StartedProfileWorkflowResult, error)
@@ -179,6 +181,30 @@ func (s *WorkflowServiceOp) CreateProfilesAndVerify(ctx context.Context, reqBody
 }
 
 // FindProfileByNameVerified resolves a profile by exact name and confirms its meta is readable.
+
+// CreateLocalProfile creates a local profile by ensuring storage.is_local=true and then verifying creation.
+func (s *WorkflowServiceOp) CreateLocalProfile(ctx context.Context, reqBody *CreateProfileRequest, opts CreateProfilesAndVerifyOptions) (*CreatedProfilesWorkflowResult, error) {
+	if reqBody.Parameters == nil {
+		reqBody.Parameters = &ProfileParameters{}
+	}
+	if reqBody.Parameters.Storage == nil {
+		reqBody.Parameters.Storage = &Storage{}
+	}
+	reqBody.Parameters.Storage.IsLocal = true
+	return s.CreateProfilesAndVerify(ctx, reqBody, opts)
+}
+
+// CreateCloudProfile creates a cloud profile by ensuring storage.is_local=false and then verifying creation.
+func (s *WorkflowServiceOp) CreateCloudProfile(ctx context.Context, reqBody *CreateProfileRequest, opts CreateProfilesAndVerifyOptions) (*CreatedProfilesWorkflowResult, error) {
+	if reqBody.Parameters == nil {
+		reqBody.Parameters = &ProfileParameters{}
+	}
+	if reqBody.Parameters.Storage == nil {
+		reqBody.Parameters.Storage = &Storage{}
+	}
+	reqBody.Parameters.Storage.IsLocal = false
+	return s.CreateProfilesAndVerify(ctx, reqBody, opts)
+}
 func (s *WorkflowServiceOp) FindProfileByNameVerified(ctx context.Context, profileName string, opts FindProfileByNameVerifiedOptions) (*VerifiedProfileWorkflowResult, error) {
 	profile, _, err := s.client.Profiles.FindByName(ctx, profileName, workflowFindOptions(opts.FindOptions))
 	if err != nil {

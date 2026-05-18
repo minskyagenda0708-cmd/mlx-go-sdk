@@ -21,6 +21,8 @@ const (
 // LauncherService manages running profiles via the local launcher.
 type LauncherService interface {
 	Start(context.Context, string, string, StartProfileOptions) (*StartProfileResponse, *Response, error)
+	StartQuick(context.Context, *StartQuickProfileRequest) (*StartQuickProfileResponse, *Response, error)
+	SaveQuick(context.Context, *SaveQuickProfileRequest) (*EmptyDataResponse, *Response, error)
 	Stop(context.Context, string) (*EmptyDataResponse, *Response, error)
 	StopAll(context.Context, StopAllProfilesOptions) (*EmptyDataResponse, *Response, error)
 	Health(context.Context) (*LauncherHealthResponse, *Response, error)
@@ -29,6 +31,7 @@ type LauncherService interface {
 	Statuses(context.Context) (*AllProfileStatusesResponse, *Response, error)
 	QuickStatuses(context.Context) (*QuickProfileStatusesResponse, *Response, error)
 	Version(context.Context) (*LauncherVersionResponse, *Response, error)
+	ValidateProxy(context.Context, *ValidateProxyRequest) (*ValidateProxyResponse, *Response, error)
 }
 
 // LauncherServiceOp is the concrete launcher service.
@@ -66,6 +69,65 @@ type StartedProfileData struct {
 	RequestedAutomation AutomationType `json:"requested_automation,omitempty"`
 	LauncherAutomation  AutomationType `json:"launcher_automation,omitempty"`
 	CDPPort             string         `json:"cdp_port,omitempty"`
+}
+
+// StartQuickProfileRequest configures a quick profile start.
+type StartQuickProfileRequest struct {
+	BrowserType      string             `json:"browser_type,omitempty"`
+	OSType           string             `json:"os_type,omitempty"`
+	ScriptFile       string             `json:"script_file,omitempty"`
+	AutomationType   AutomationType     `json:"automation,omitempty"`
+	CoreVersion      int                `json:"core_version,omitempty"`
+	CoreMinorVersion int                `json:"core_minor_version,omitempty"`
+	Headless         bool               `json:"is_headless,omitempty"`
+	Parameters       *ProfileParameters `json:"parameters,omitempty"`
+	CustomStartURLs  []string           `json:"custom_start_urls,omitempty"`
+}
+
+// StartQuickProfileResponse contains the launcher port and runtime info for a quick profile.
+type StartQuickProfileResponse struct {
+	Status Status             `json:"status"`
+	Data   StartedProfileData `json:"data"`
+}
+
+func (r *StartQuickProfileResponse) GetStatus() Status { return r.Status }
+
+// SaveQuickProfileRequest configures saving quick profiles.
+type SaveQuickProfileRequest struct {
+	Data []SaveQuickProfileItem `json:"data"`
+}
+
+// SaveQuickProfileItem identifies a quick profile to save.
+type SaveQuickProfileItem struct {
+	ProfileID string `json:"profile_id"`
+}
+
+// ValidateProxyRequest configures proxy validation.
+type ValidateProxyRequest struct {
+	Type     string `json:"type"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+}
+
+// ValidateProxyResponse contains proxy validation results.
+type ValidateProxyResponse struct {
+	Status Status              `json:"status"`
+	Data   ProxyValidationData `json:"data"`
+}
+
+func (r *ValidateProxyResponse) GetStatus() Status { return r.Status }
+
+// ProxyValidationData contains geolocation and accuracy data for a proxy.
+type ProxyValidationData struct {
+	Accuracy    float64 `json:"accuracy"`
+	Altitude    float64 `json:"altitude"`
+	CountryCode string  `json:"country_code"`
+	IP          string  `json:"ip"`
+	Latitude    float64 `json:"latitude"`
+	Longitude   float64 `json:"longitude"`
+	Timezone    string  `json:"timezone"`
 }
 
 // ProfileRuntimeStatusResponse contains a single profile status.
@@ -309,6 +371,50 @@ func (s *LauncherServiceOp) Version(ctx context.Context) (*LauncherVersionRespon
 		return nil, nil, err
 	}
 	out := new(LauncherVersionResponse)
+	resp, err := s.client.do(req, out)
+	return out, resp, err
+}
+
+func (s *LauncherServiceOp) StartQuick(ctx context.Context, reqBody *StartQuickProfileRequest) (*StartQuickProfileResponse, *Response, error) {
+	if reqBody == nil {
+		return nil, nil, NewArgError("reqBody", "it must not be nil")
+	}
+	reqBodyCopy := *reqBody
+	reqBodyCopy.AutomationType = normalizeLauncherAutomation(reqBodyCopy.AutomationType)
+	req, err := s.client.newLauncherRequest(ctx, http.MethodPost, "/api/v3/profile/quick", &reqBodyCopy)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := new(StartQuickProfileResponse)
+	resp, err := s.client.do(req, out)
+	if err == nil {
+		enrichStartedProfileData(&out.Data, reqBody.AutomationType, reqBodyCopy.AutomationType)
+	}
+	return out, resp, err
+}
+
+func (s *LauncherServiceOp) SaveQuick(ctx context.Context, reqBody *SaveQuickProfileRequest) (*EmptyDataResponse, *Response, error) {
+	if reqBody == nil {
+		return nil, nil, NewArgError("reqBody", "it must not be nil")
+	}
+	req, err := s.client.newLauncherRequest(ctx, http.MethodPost, "/api/v1/profile/quick/save", reqBody)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := new(EmptyDataResponse)
+	resp, err := s.client.do(req, out)
+	return out, resp, err
+}
+
+func (s *LauncherServiceOp) ValidateProxy(ctx context.Context, reqBody *ValidateProxyRequest) (*ValidateProxyResponse, *Response, error) {
+	if reqBody == nil {
+		return nil, nil, NewArgError("reqBody", "it must not be nil")
+	}
+	req, err := s.client.newLauncherRequest(ctx, http.MethodPost, "/api/v1/proxy/validate", reqBody)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := new(ValidateProxyResponse)
 	resp, err := s.client.do(req, out)
 	return out, resp, err
 }

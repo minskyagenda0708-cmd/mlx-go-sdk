@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -230,4 +231,8 @@ func TestLauncherWaitForRunningRetries(t *testing.T) {
 	if resp.Data.Status != "browser_running" {
 		t.Fatalf("unexpected status: %s", resp.Data.Status)
 	}
+}
+
+func contains(text, part string) bool {
+	return strings.Contains(text, part)
 }
