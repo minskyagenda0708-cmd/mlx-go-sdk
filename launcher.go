@@ -58,11 +58,14 @@ func (r *StartProfileResponse) GetStatus() Status { return r.Status }
 
 // StartedProfileData contains launcher startup output.
 type StartedProfileData struct {
-	BrowserType string `json:"browser_type"`
-	CoreVersion int    `json:"core_version"`
-	ID          string `json:"id"`
-	IsQuick     bool   `json:"is_quick"`
-	Port        string `json:"port"`
+	BrowserType         string         `json:"browser_type"`
+	CoreVersion         int            `json:"core_version"`
+	ID                  string         `json:"id"`
+	IsQuick             bool           `json:"is_quick"`
+	Port                string         `json:"port"`
+	RequestedAutomation AutomationType `json:"requested_automation,omitempty"`
+	LauncherAutomation  AutomationType `json:"launcher_automation,omitempty"`
+	CDPPort             string         `json:"cdp_port,omitempty"`
 }
 
 // ProfileRuntimeStatusResponse contains a single profile status.
@@ -176,9 +179,10 @@ func (s *LauncherServiceOp) Start(ctx context.Context, folderID, profileID strin
 	if profileID == "" {
 		return nil, nil, NewArgError("profileID", "it must not be empty")
 	}
+	launcherAutomation := normalizeLauncherAutomation(opts.AutomationType)
 	values := url.Values{}
-	if opts.AutomationType != "" {
-		values.Set("automation_type", string(opts.AutomationType))
+	if launcherAutomation != "" {
+		values.Set("automation_type", string(launcherAutomation))
 	}
 	values.Set("headless_mode", fmt.Sprintf("%t", opts.Headless))
 	path := fmt.Sprintf("/api/v2/profile/f/%s/p/%s/start?%s", url.PathEscape(folderID), url.PathEscape(profileID), values.Encode())
@@ -191,6 +195,9 @@ func (s *LauncherServiceOp) Start(ctx context.Context, folderID, profileID strin
 	}
 	out := new(StartProfileResponse)
 	resp, err := s.client.do(req, out)
+	if err == nil {
+		enrichStartedProfileData(&out.Data, opts.AutomationType, launcherAutomation)
+	}
 	return out, resp, err
 }
 

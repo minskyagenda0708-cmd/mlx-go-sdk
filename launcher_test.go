@@ -51,6 +51,45 @@ func TestLauncherStart(t *testing.T) {
 	}
 }
 
+func TestLauncherStartUsesPlaywrightForRod(t *testing.T) {
+	server, httpClient := testutil.NewServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("automation_type"); got != string(AutomationPlaywright) {
+			t.Errorf("unexpected automation_type: got %q want %q", got, AutomationPlaywright)
+		}
+		if got := r.URL.Query().Get("headless_mode"); got != "true" {
+			t.Errorf("unexpected headless_mode: got %q want %q", got, "true")
+		}
+		fmt.Fprint(w, `{"status":{"http_code":200,"message":"Profile started successfully"},"data":{"browser_type":"mimic","core_version":132,"id":"profile-1","is_quick":false,"port":"55513"}}`)
+	})
+
+	client, err := New(
+		WithToken("test-token"),
+		WithHTTPClient(httpClient),
+		WithLauncherURL(server.URL),
+	)
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+
+	resp, _, err := client.Launcher.Start(context.Background(), "folder-1", "profile-1", StartProfileOptions{
+		AutomationType: AutomationRod,
+		Headless:       true,
+	})
+	if err != nil {
+		t.Fatalf("Launcher.Start returned error: %v", err)
+	}
+
+	if resp.Data.Port != "55513" {
+		t.Fatalf("unexpected port: %s", resp.Data.Port)
+	}
+	if resp.Data.RequestedAutomation != AutomationRod {
+		t.Fatalf("unexpected RequestedAutomation: got %q want %q", resp.Data.RequestedAutomation, AutomationRod)
+	}
+	if resp.Data.LauncherAutomation != AutomationPlaywright {
+		t.Fatalf("unexpected LauncherAutomation: got %q want %q", resp.Data.LauncherAutomation, AutomationPlaywright)
+	}
+}
+
 func TestLauncherHealth(t *testing.T) {
 	server, httpClient := testutil.NewServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
