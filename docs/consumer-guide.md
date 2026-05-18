@@ -98,6 +98,10 @@ Use the Rod guide in `docs/rod-example.md`. The SDK now owns the Rod-to-Playwrig
 
 ```go
 result, err := client.Workflows.StartProfileAutomationByName(ctx, "Demo", mlx.StartProfileAutomationByNameOptions{
+    FindOptions: &mlx.FindProfileOptions{
+        FolderID:    folderID,
+        StorageType: "all",
+    },
     StartOptions: mlx.StartProfileOptions{
         AutomationType: mlx.AutomationRod,
     },

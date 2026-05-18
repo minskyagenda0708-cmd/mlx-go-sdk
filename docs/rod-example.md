@@ -32,6 +32,10 @@ func main() {
     profileName := "your-profile-name"
 
     started, err := client.Workflows.StartProfileAutomationByName(ctx, profileName, mlx.StartProfileAutomationByNameOptions{
+        FindOptions: &mlx.FindProfileOptions{
+            FolderID:    folderID,
+            StorageType: "all",
+        },
         StartOptions: mlx.StartProfileOptions{
             AutomationType: mlx.AutomationRod,
         },

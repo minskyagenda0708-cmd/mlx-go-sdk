@@ -9,6 +9,7 @@ These helpers do more than fire one request and trust the immediate response. Th
 - `Workflows.CreateProfilesAndVerify(...)`
 - `Workflows.FindProfileByNameVerified(...)`
 - `Workflows.StartProfileByName(...)`
+- `Workflows.StartProfileAutomationByName(...)`
 - `Workflows.StopProfileByName(...)`
 - `Workflows.ImportProfileAndVerify(...)`
 - `Workflows.EnableExtensionForProfileByName(...)`
@@ -34,6 +35,13 @@ These helpers do more than fire one request and trust the immediate response. Th
 - resolves and verifies the profile first
 - starts it via the launcher
 - optionally waits for launcher status to become running
+
+### StartProfileAutomationByName
+
+- resolves and verifies the profile first
+- normalizes `AutomationRod` to launcher `playwright`
+- can wait for launcher status to become running
+- resolves Rod-compatible and CDP-compatible control URLs from the started profile response
 
 ### StopProfileByName
 
