@@ -1,6 +1,6 @@
 module github.com/minskyagenda0708-cmd/mlx-go-sdk
 
-go 1.26
+go 1.23
 
 require github.com/go-rod/rod v0.116.2
 
