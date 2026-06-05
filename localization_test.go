@@ -225,13 +225,16 @@ func TestPatchProfileForProxy_CountryFromProxy(t *testing.T) {
 		t.Errorf("Zone: got %q, want %q", tz.Zone, "Europe/Berlin")
 	}
 
-	// Verify screen fingerprint
+	// Verify screen fingerprint is within default bounds
 	screen := req.Parameters.Fingerprint.Screen
 	if screen == nil {
 		t.Fatal("Screen fingerprint is nil")
 	}
-	if screen.Width != 1920 || screen.Height != 1080 {
-		t.Errorf("Screen: got %dx%d, want 1920x1080", screen.Width, screen.Height)
+	if screen.Width < 1366 || screen.Width > 1920 {
+		t.Errorf("Screen.Width: got %d, want range [1366, 1920]", screen.Width)
+	}
+	if screen.Height < 768 || screen.Height > 1080 {
+		t.Errorf("Screen.Height: got %d, want range [768, 1080]", screen.Height)
 	}
 	if screen.PixelRatio != 1.0 {
 		t.Errorf("PixelRatio: got %f, want 1.0", screen.PixelRatio)
@@ -253,8 +256,10 @@ func TestPatchProfileForProxy_CountryFromProxy(t *testing.T) {
 		}
 		if p.Flag == "--window-size" {
 			hasWindowSize = true
-			if p.Value != "1920,1080" {
-				t.Errorf("--window-size value: got %q, want %q", p.Value, "1920,1080")
+			// Window size must match the screen fingerprint
+			expected := fmt.Sprintf("%d,%d", screen.Width, screen.Height)
+			if p.Value != expected {
+				t.Errorf("--window-size value: got %q, want %q", p.Value, expected)
 			}
 		}
 	}
@@ -263,6 +268,59 @@ func TestPatchProfileForProxy_CountryFromProxy(t *testing.T) {
 	}
 	if !hasWindowSize {
 		t.Error("missing --window-size in CMDParams")
+	}
+}
+
+func TestPatchProfileForProxy_WithOptionsOverridesScreenBounds(t *testing.T) {
+	var gotBody []byte
+
+	server, httpClient := testutil.NewServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		fmt.Fprint(w, `{"status":{"http_code":200,"message":"OK"}}`)
+	})
+
+	client, err := New(
+		WithToken("test-token"),
+		WithHTTPClient(httpClient),
+		WithBaseURL(server.URL),
+	)
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+
+	proxy := &Proxy{Host: "jp.proxy.example.com", Port: 8080, Type: "http", Country: "JP"}
+
+	// Force exact resolution: only 1536×864 fits
+	opts := PatchProfileForProxyOptions{
+		MinScreenWidth:  1536,
+		MinScreenHeight: 864,
+		MaxScreenWidth:  1536,
+		MaxScreenHeight: 864,
+	}
+
+	_, _, err = client.PatchProfileForProxyWithOptions(context.Background(), "profile-jp", proxy, opts)
+	if err != nil {
+		t.Fatalf("PatchProfileForProxyWithOptions returned error: %v", err)
+	}
+
+	var req PatchProfileRequest
+	if err := json.Unmarshal(gotBody, &req); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	screen := req.Parameters.Fingerprint.Screen
+	if screen == nil {
+		t.Fatal("Screen is nil")
+	}
+	if screen.Width != 1536 || screen.Height != 864 {
+		t.Errorf("Screen: got %dx%d, want 1536×864", screen.Width, screen.Height)
+	}
+
+	// --lang should be Japanese
+	for _, p := range req.Parameters.Fingerprint.CMDParams.Params {
+		if p.Flag == "--lang" && p.Value != "ja-JP" {
+			t.Errorf("--lang: got %q, want ja-JP", p.Value)
+		}
 	}
 }
 
@@ -333,9 +391,7 @@ func TestResolveProxyCountry_FromProxyField(t *testing.T) {
 }
 
 func TestResolveProxyCountry_FallbackUS(t *testing.T) {
-	// No host/port => can't validate, should fallback to US
 	server, httpClient := testutil.NewServer(t, func(w http.ResponseWriter, r *http.Request) {
-		// Should not be called
 		t.Fatal("unexpected request to server")
 	})
 
@@ -354,5 +410,102 @@ func TestResolveProxyCountry_FallbackUS(t *testing.T) {
 	}
 	if cc != "US" {
 		t.Errorf("got %q, want fallback %q", cc, "US")
+	}
+}
+
+// ── pickScreenResolution ──────────────────────────────────────────
+
+func TestPickScreenResolution_DefaultBounds(t *testing.T) {
+	opts := PatchProfileForProxyOptions{}
+	opts.defaults()
+
+	// Run many times to verify all picks are within bounds
+	for i := 0; i < 100; i++ {
+		s := pickScreenResolution(opts)
+		if s.Width < 1366 || s.Width > 1920 {
+			t.Errorf("pick %d: Width %d out of [1366,1920]", i, s.Width)
+		}
+		if s.Height < 768 || s.Height > 1080 {
+			t.Errorf("pick %d: Height %d out of [768,1080]", i, s.Height)
+		}
+		if s.PixelRatio != 1.0 {
+			t.Errorf("pick %d: PixelRatio %f, want 1.0", i, s.PixelRatio)
+		}
+	}
+}
+
+func TestPickScreenResolution_ExactBounds(t *testing.T) {
+	opts := PatchProfileForProxyOptions{
+		MinScreenWidth:  1536,
+		MinScreenHeight: 864,
+		MaxScreenWidth:  1536,
+		MaxScreenHeight: 864,
+	}
+	s := pickScreenResolution(opts)
+	if s.Width != 1536 || s.Height != 864 {
+		t.Errorf("got %dx%d, want 1536×864", s.Width, s.Height)
+	}
+}
+
+func TestPickScreenResolution_NoMatchFallsBack(t *testing.T) {
+	opts := PatchProfileForProxyOptions{
+		MinScreenWidth:  9999,
+		MinScreenHeight: 9999,
+		MaxScreenWidth:  9999,
+		MaxScreenHeight: 9999,
+	}
+	s := pickScreenResolution(opts)
+	// Should fall back to the min bounds
+	if s.Width != 9999 || s.Height != 9999 {
+		t.Errorf("got %dx%d, want fallback 9999×9999", s.Width, s.Height)
+	}
+}
+
+func TestPickScreenResolution_Variety(t *testing.T) {
+	opts := PatchProfileForProxyOptions{
+		MinScreenWidth:  1366,
+		MinScreenHeight: 768,
+		MaxScreenWidth:  1920,
+		MaxScreenHeight: 1200,
+	}
+	seen := map[string]bool{}
+	for i := 0; i < 200; i++ {
+		s := pickScreenResolution(opts)
+		seen[fmt.Sprintf("%dx%d", s.Width, s.Height)] = true
+	}
+	// With defaults 1366-1920 wide and 768-1200 tall, the pool includes
+	// 1366×768, 1440×900, 1536×864, 1600×900, 1680×1050, 1920×1080, 1920×1200.
+	if len(seen) < 3 {
+		t.Errorf("expected variety in screen picks, only got %d distinct resolutions: %v", len(seen), seen)
+	}
+}
+
+// ── PatchProfileForProxyOptions.defaults ───────────────────────────
+
+func TestPatchProfileForProxyOptions_Defaults(t *testing.T) {
+	opts := PatchProfileForProxyOptions{}
+	opts.defaults()
+	if opts.MinScreenWidth != 1366 {
+		t.Errorf("MinScreenWidth: got %d, want 1366", opts.MinScreenWidth)
+	}
+	if opts.MinScreenHeight != 768 {
+		t.Errorf("MinScreenHeight: got %d, want 768", opts.MinScreenHeight)
+	}
+	if opts.MaxScreenWidth != 1920 {
+		t.Errorf("MaxScreenWidth: got %d, want 1920", opts.MaxScreenWidth)
+	}
+	if opts.MaxScreenHeight != 1080 {
+		t.Errorf("MaxScreenHeight: got %d, want 1080", opts.MaxScreenHeight)
+	}
+}
+
+func TestPatchProfileForProxyOptions_PartialOverride(t *testing.T) {
+	opts := PatchProfileForProxyOptions{MinScreenWidth: 1600}
+	opts.defaults()
+	if opts.MinScreenWidth != 1600 {
+		t.Errorf("MinScreenWidth: got %d, want 1600 (overridden)", opts.MinScreenWidth)
+	}
+	if opts.MinScreenHeight != 768 {
+		t.Errorf("MinScreenHeight: got %d, want 768 (default)", opts.MinScreenHeight)
 	}
 }

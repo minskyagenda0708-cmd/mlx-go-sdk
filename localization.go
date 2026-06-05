@@ -2,6 +2,8 @@ package mlx
 
 import (
 	"context"
+	"fmt"
+	"math/rand"
 	"strings"
 )
 
@@ -21,11 +23,54 @@ func LocaleForCountry(countryCode string) *LocaleProfile {
 	return localeTable["US"] // fallback
 }
 
+// PatchProfileForProxyOptions configures the behaviour of PatchProfileForProxy.
+type PatchProfileForProxyOptions struct {
+	// MinScreenWidth is the minimum screen width for the generated fingerprint.
+	// Profiles with a smaller width produce browser windows that may not fit on
+	// the operator's physical display. Default: 1366.
+	MinScreenWidth int
+
+	// MinScreenHeight is the minimum screen height for the generated fingerprint.
+	// Default: 768.
+	MinScreenHeight int
+
+	// MaxScreenWidth is the maximum screen width. Default: 1920.
+	MaxScreenWidth int
+
+	// MaxScreenHeight is the maximum screen height. Default: 1080.
+	MaxScreenHeight int
+}
+
+// defaults fills zero-valued fields with sensible defaults.
+func (o *PatchProfileForProxyOptions) defaults() {
+	if o.MinScreenWidth <= 0 {
+		o.MinScreenWidth = 1366
+	}
+	if o.MinScreenHeight <= 0 {
+		o.MinScreenHeight = 768
+	}
+	if o.MaxScreenWidth <= 0 {
+		o.MaxScreenWidth = 1920
+	}
+	if o.MaxScreenHeight <= 0 {
+		o.MaxScreenHeight = 1080
+	}
+}
+
 // PatchProfileForProxy installs the given proxy into a profile and automatically
 // adjusts language, locale, timezone, screen, and browser UI language to match
-// the proxy country. If the proxy country is not already known, it is resolved
-// via the launcher ValidateProxy endpoint.
+// the proxy country. Screen resolution is chosen randomly from a pool of real
+// resolutions, bounded by the default limits (1366×768 – 1920×1080).
+//
+// Use PatchProfileForProxyWithOptions for finer control over screen bounds.
 func (c *Client) PatchProfileForProxy(ctx context.Context, profileID string, proxy *Proxy) (*EmptyDataResponse, *Response, error) {
+	return c.PatchProfileForProxyWithOptions(ctx, profileID, proxy, PatchProfileForProxyOptions{})
+}
+
+// PatchProfileForProxyWithOptions is the configurable variant of
+// PatchProfileForProxy. It accepts PatchProfileForProxyOptions to control
+// the range of screen resolutions.
+func (c *Client) PatchProfileForProxyWithOptions(ctx context.Context, profileID string, proxy *Proxy, opts PatchProfileForProxyOptions) (*EmptyDataResponse, *Response, error) {
 	if proxy == nil {
 		return nil, nil, NewArgError("proxy", "it must not be nil")
 	}
@@ -39,6 +84,8 @@ func (c *Client) PatchProfileForProxy(ctx context.Context, profileID string, pro
 	}
 
 	locale := LocaleForCountry(countryCode)
+	opts.defaults()
+	screen := pickScreenResolution(opts)
 
 	req := &PatchProfileRequest{
 		ProfileID: profileID,
@@ -53,11 +100,11 @@ func (c *Client) PatchProfileForProxy(ctx context.Context, profileID string, pro
 			Fingerprint: &Fingerprint{
 				Localization: locale.Localization,
 				Timezone:     locale.Timezone,
-				Screen:       &ScreenFingerprint{Width: 1920, Height: 1080, PixelRatio: 1.0},
+				Screen:       screen,
 				CMDParams: &CommandParams{
 					Params: []CommandParam{
 						{Flag: "--lang", Value: locale.Localization.Locale},
-						{Flag: "--window-size", Value: "1920,1080"},
+						{Flag: "--window-size", Value: fmt.Sprintf("%d,%d", screen.Width, screen.Height)},
 					},
 				},
 			},
@@ -91,6 +138,53 @@ func (c *Client) resolveProxyCountry(ctx context.Context, proxy *Proxy) (string,
 	}
 
 	return "US", nil
+}
+
+// pickScreenResolution selects a random screen resolution from the pool of
+// common real-world resolutions that fits within the given bounds.
+func pickScreenResolution(opts PatchProfileForProxyOptions) *ScreenFingerprint {
+	candidates := make([]ScreenFingerprint, 0, len(commonScreenResolutions))
+	for _, s := range commonScreenResolutions {
+		if s.Width >= opts.MinScreenWidth && s.Width <= opts.MaxScreenWidth &&
+			s.Height >= opts.MinScreenHeight && s.Height <= opts.MaxScreenHeight {
+			candidates = append(candidates, s)
+		}
+	}
+	if len(candidates) == 0 {
+		// Fallback: use the minimum bounds directly.
+		return &ScreenFingerprint{
+			Width:      opts.MinScreenWidth,
+			Height:     opts.MinScreenHeight,
+			PixelRatio: 1.0,
+		}
+	}
+	picked := candidates[rand.Intn(len(candidates))]
+	picked.PixelRatio = 1.0
+	return &picked
+}
+
+// commonScreenResolutions lists real-world screen resolutions from laptops and
+// desktops. Used to generate varied but believable fingerprint values.
+var commonScreenResolutions = []ScreenFingerprint{
+	// ── Laptop resolutions ────────────────────────────────
+	{Width: 1366, Height: 768},  // budget 15" (most common laptop)
+	{Width: 1440, Height: 900},  // MacBook Air 13"
+	{Width: 1536, Height: 864},  // Windows 125% scaling on FHD
+	{Width: 1600, Height: 900},  // mid-range 15-17"
+	{Width: 1680, Height: 1050}, // older 15" business laptops
+	{Width: 1920, Height: 1080}, // FHD — most common
+	{Width: 1920, Height: 1200}, // FHD 16:10 (XPS, ThinkPad)
+	{Width: 2560, Height: 1440}, // QHD laptop
+	{Width: 2560, Height: 1600}, // QHD 16:10 laptop
+	{Width: 2880, Height: 1800}, // MacBook Pro 14" native
+	{Width: 3024, Height: 1964}, // MacBook Pro 16" native
+	{Width: 3840, Height: 2160}, // 4K laptop
+
+	// ── Desktop resolutions ───────────────────────────────
+	{Width: 2560, Height: 1080}, // ultrawide 29"
+	{Width: 2560, Height: 1440}, // QHD monitor
+	{Width: 3440, Height: 1440}, // ultrawide 34"
+	{Width: 3840, Height: 2160}, // 4K monitor
 }
 
 // localeTable maps ISO 3166-1 alpha-2 country codes to LocaleProfile presets.
