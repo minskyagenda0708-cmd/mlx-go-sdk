@@ -22,9 +22,9 @@ func LocaleForCountry(countryCode string) *LocaleProfile {
 }
 
 // PatchProfileForProxy installs the given proxy into a profile and automatically
-// adjusts language, locale, and timezone to match the proxy country. If the
-// proxy country is not already known, it is resolved via the launcher
-// ValidateProxy endpoint.
+// adjusts language, locale, timezone, screen, and browser UI language to match
+// the proxy country. If the proxy country is not already known, it is resolved
+// via the launcher ValidateProxy endpoint.
 func (c *Client) PatchProfileForProxy(ctx context.Context, profileID string, proxy *Proxy) (*EmptyDataResponse, *Response, error) {
 	if proxy == nil {
 		return nil, nil, NewArgError("proxy", "it must not be nil")
@@ -48,10 +48,18 @@ func (c *Client) PatchProfileForProxy(ctx context.Context, profileID string, pro
 				LocalizationMasking: "custom",
 				TimezoneMasking:     "custom",
 				ProxyMasking:        "custom",
+				ScreenMasking:       "custom",
 			},
 			Fingerprint: &Fingerprint{
 				Localization: locale.Localization,
 				Timezone:     locale.Timezone,
+				Screen:       &ScreenFingerprint{Width: 1920, Height: 1080, PixelRatio: 1.0},
+				CMDParams: &CommandParams{
+					Params: []CommandParam{
+						{Flag: "--lang", Value: locale.Localization.Locale},
+						{Flag: "--window-size", Value: "1920,1080"},
+					},
+				},
 			},
 		},
 	}

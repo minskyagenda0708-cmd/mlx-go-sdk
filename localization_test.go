@@ -203,6 +203,9 @@ func TestPatchProfileForProxy_CountryFromProxy(t *testing.T) {
 	if flags.ProxyMasking != "custom" {
 		t.Errorf("ProxyMasking: got %q, want %q", flags.ProxyMasking, "custom")
 	}
+	if flags.ScreenMasking != "custom" {
+		t.Errorf("ScreenMasking: got %q, want %q", flags.ScreenMasking, "custom")
+	}
 
 	// Verify localization matches Germany
 	loc := req.Parameters.Fingerprint.Localization
@@ -220,6 +223,46 @@ func TestPatchProfileForProxy_CountryFromProxy(t *testing.T) {
 	tz := req.Parameters.Fingerprint.Timezone
 	if tz.Zone != "Europe/Berlin" {
 		t.Errorf("Zone: got %q, want %q", tz.Zone, "Europe/Berlin")
+	}
+
+	// Verify screen fingerprint
+	screen := req.Parameters.Fingerprint.Screen
+	if screen == nil {
+		t.Fatal("Screen fingerprint is nil")
+	}
+	if screen.Width != 1920 || screen.Height != 1080 {
+		t.Errorf("Screen: got %dx%d, want 1920x1080", screen.Width, screen.Height)
+	}
+	if screen.PixelRatio != 1.0 {
+		t.Errorf("PixelRatio: got %f, want 1.0", screen.PixelRatio)
+	}
+
+	// Verify CMDParams (--lang and --window-size)
+	cmd := req.Parameters.Fingerprint.CMDParams
+	if cmd == nil || len(cmd.Params) == 0 {
+		t.Fatal("CMDParams is nil or empty")
+	}
+	hasLang := false
+	hasWindowSize := false
+	for _, p := range cmd.Params {
+		if p.Flag == "--lang" {
+			hasLang = true
+			if p.Value != "de-DE" {
+				t.Errorf("--lang value: got %q, want %q", p.Value, "de-DE")
+			}
+		}
+		if p.Flag == "--window-size" {
+			hasWindowSize = true
+			if p.Value != "1920,1080" {
+				t.Errorf("--window-size value: got %q, want %q", p.Value, "1920,1080")
+			}
+		}
+	}
+	if !hasLang {
+		t.Error("missing --lang in CMDParams")
+	}
+	if !hasWindowSize {
+		t.Error("missing --window-size in CMDParams")
 	}
 }
 
