@@ -27,11 +27,11 @@ func LocaleForCountry(countryCode string) *LocaleProfile {
 type PatchProfileForProxyOptions struct {
 	// MinScreenWidth is the minimum screen width for the generated fingerprint.
 	// Profiles with a smaller width produce browser windows that may not fit on
-	// the operator's physical display. Default: 1366.
+	// the operator's physical display. Default: 1920.
 	MinScreenWidth int
 
 	// MinScreenHeight is the minimum screen height for the generated fingerprint.
-	// Default: 768.
+	// Default: 1080.
 	MinScreenHeight int
 
 	// MaxScreenWidth is the maximum screen width. Default: 1920.
@@ -44,10 +44,10 @@ type PatchProfileForProxyOptions struct {
 // defaults fills zero-valued fields with sensible defaults.
 func (o *PatchProfileForProxyOptions) defaults() {
 	if o.MinScreenWidth <= 0 {
-		o.MinScreenWidth = 1366
+		o.MinScreenWidth = 1920
 	}
 	if o.MinScreenHeight <= 0 {
-		o.MinScreenHeight = 768
+		o.MinScreenHeight = 1080
 	}
 	if o.MaxScreenWidth <= 0 {
 		o.MaxScreenWidth = 1920
@@ -59,8 +59,7 @@ func (o *PatchProfileForProxyOptions) defaults() {
 
 // PatchProfileForProxy installs the given proxy into a profile and automatically
 // adjusts language, locale, timezone, screen, and browser UI language to match
-// the proxy country. Screen resolution is chosen randomly from a pool of real
-// resolutions, bounded by the default limits (1366×768 – 1920×1080).
+// the proxy country. Screen resolution defaults to 1920×1080 (FHD).
 //
 // Use PatchProfileForProxyWithOptions for finer control over screen bounds.
 func (c *Client) PatchProfileForProxy(ctx context.Context, profileID string, proxy *Proxy) (*EmptyDataResponse, *Response, error) {

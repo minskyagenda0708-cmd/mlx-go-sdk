@@ -225,16 +225,16 @@ func TestPatchProfileForProxy_CountryFromProxy(t *testing.T) {
 		t.Errorf("Zone: got %q, want %q", tz.Zone, "Europe/Berlin")
 	}
 
-	// Verify screen fingerprint is within default bounds
+	// Verify screen fingerprint is within default bounds (1920×1080 exact)
 	screen := req.Parameters.Fingerprint.Screen
 	if screen == nil {
 		t.Fatal("Screen fingerprint is nil")
 	}
-	if screen.Width < 1366 || screen.Width > 1920 {
-		t.Errorf("Screen.Width: got %d, want range [1366, 1920]", screen.Width)
+	if screen.Width != 1920 {
+		t.Errorf("Screen.Width: got %d, want 1920", screen.Width)
 	}
-	if screen.Height < 768 || screen.Height > 1080 {
-		t.Errorf("Screen.Height: got %d, want range [768, 1080]", screen.Height)
+	if screen.Height != 1080 {
+		t.Errorf("Screen.Height: got %d, want 1080", screen.Height)
 	}
 	if screen.PixelRatio != 1.0 {
 		t.Errorf("PixelRatio: got %f, want 1.0", screen.PixelRatio)
@@ -419,14 +419,11 @@ func TestPickScreenResolution_DefaultBounds(t *testing.T) {
 	opts := PatchProfileForProxyOptions{}
 	opts.defaults()
 
-	// Run many times to verify all picks are within bounds
+	// With defaults min=max=1920×1080, always get exactly that
 	for i := 0; i < 100; i++ {
 		s := pickScreenResolution(opts)
-		if s.Width < 1366 || s.Width > 1920 {
-			t.Errorf("pick %d: Width %d out of [1366,1920]", i, s.Width)
-		}
-		if s.Height < 768 || s.Height > 1080 {
-			t.Errorf("pick %d: Height %d out of [768,1080]", i, s.Height)
+		if s.Width != 1920 || s.Height != 1080 {
+			t.Errorf("pick %d: got %dx%d, want 1920×1080", i, s.Width, s.Height)
 		}
 		if s.PixelRatio != 1.0 {
 			t.Errorf("pick %d: PixelRatio %f, want 1.0", i, s.PixelRatio)
@@ -465,17 +462,17 @@ func TestPickScreenResolution_Variety(t *testing.T) {
 	opts := PatchProfileForProxyOptions{
 		MinScreenWidth:  1366,
 		MinScreenHeight: 768,
-		MaxScreenWidth:  1920,
-		MaxScreenHeight: 1200,
+		MaxScreenWidth:  2560,
+		MaxScreenHeight: 1440,
 	}
 	seen := map[string]bool{}
 	for i := 0; i < 200; i++ {
 		s := pickScreenResolution(opts)
 		seen[fmt.Sprintf("%dx%d", s.Width, s.Height)] = true
 	}
-	// With defaults 1366-1920 wide and 768-1200 tall, the pool includes
-	// 1366×768, 1440×900, 1536×864, 1600×900, 1680×1050, 1920×1080, 1920×1200.
-	if len(seen) < 3 {
+	// With range 1366-2560 wide and 768-1440 tall, the pool includes
+	// many resolutions. Should see at least 5 different ones.
+	if len(seen) < 5 {
 		t.Errorf("expected variety in screen picks, only got %d distinct resolutions: %v", len(seen), seen)
 	}
 }
@@ -485,11 +482,11 @@ func TestPickScreenResolution_Variety(t *testing.T) {
 func TestPatchProfileForProxyOptions_Defaults(t *testing.T) {
 	opts := PatchProfileForProxyOptions{}
 	opts.defaults()
-	if opts.MinScreenWidth != 1366 {
-		t.Errorf("MinScreenWidth: got %d, want 1366", opts.MinScreenWidth)
+	if opts.MinScreenWidth != 1920 {
+		t.Errorf("MinScreenWidth: got %d, want 1920", opts.MinScreenWidth)
 	}
-	if opts.MinScreenHeight != 768 {
-		t.Errorf("MinScreenHeight: got %d, want 768", opts.MinScreenHeight)
+	if opts.MinScreenHeight != 1080 {
+		t.Errorf("MinScreenHeight: got %d, want 1080", opts.MinScreenHeight)
 	}
 	if opts.MaxScreenWidth != 1920 {
 		t.Errorf("MaxScreenWidth: got %d, want 1920", opts.MaxScreenWidth)
@@ -500,12 +497,15 @@ func TestPatchProfileForProxyOptions_Defaults(t *testing.T) {
 }
 
 func TestPatchProfileForProxyOptions_PartialOverride(t *testing.T) {
-	opts := PatchProfileForProxyOptions{MinScreenWidth: 1600}
+	opts := PatchProfileForProxyOptions{MaxScreenWidth: 2560, MaxScreenHeight: 1440}
 	opts.defaults()
-	if opts.MinScreenWidth != 1600 {
-		t.Errorf("MinScreenWidth: got %d, want 1600 (overridden)", opts.MinScreenWidth)
+	if opts.MinScreenWidth != 1920 {
+		t.Errorf("MinScreenWidth: got %d, want 1920 (default)", opts.MinScreenWidth)
 	}
-	if opts.MinScreenHeight != 768 {
-		t.Errorf("MinScreenHeight: got %d, want 768 (default)", opts.MinScreenHeight)
+	if opts.MaxScreenWidth != 2560 {
+		t.Errorf("MaxScreenWidth: got %d, want 2560 (overridden)", opts.MaxScreenWidth)
+	}
+	if opts.MaxScreenHeight != 1440 {
+		t.Errorf("MaxScreenHeight: got %d, want 1440 (overridden)", opts.MaxScreenHeight)
 	}
 }
