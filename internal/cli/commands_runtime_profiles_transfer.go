@@ -177,6 +177,9 @@ func runLauncherStart(args []string, global globalOptions) error {
 	headless := newOptionalBoolFlag(fs, "headless", "start headless")
 	strict := newOptionalBoolFlag(fs, "strict", "enable strict mode")
 	wait := newOptionalBoolFlag(fs, "wait", "wait for running status")
+	skipProxyCheck := fs.Bool("skip-proxy-check", false, "DANGEROUS: skip the pre-launch proxy health check")
+	proxyThreshold := fs.Int("proxy-threshold-ms", 0, "override proxy latency threshold (ms)")
+	proxyHardCap := fs.Int("proxy-hard-cap-ms", 0, "override proxy latency hard cap (ms)")
 	help := fs.Bool("help", false, "show help")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -184,7 +187,7 @@ func runLauncherStart(args []string, global globalOptions) error {
 	if *help {
 		fmt.Fprintln(
 			os.Stdout,
-			"Usage: mlx launcher start --profile-id <id> | --profile-name <name> [--folder-id <id>] [--automation-type <type>] [--headless] [--strict] [--wait]",
+			"Usage: mlx launcher start --profile-id <id> | --profile-name <name> [--folder-id <id>] [--automation-type <type>] [--headless] [--strict] [--wait] [--skip-proxy-check] [--proxy-threshold-ms <ms>] [--proxy-hard-cap-ms <ms>]",
 		)
 		return nil
 	}
@@ -216,6 +219,16 @@ func runLauncherStart(args []string, global globalOptions) error {
 		}
 
 		if strings.TrimSpace(*profileName) != "" {
+			// Resolve the name to a concrete profile ID so the fail-closed
+			// proxy check runs before StartProfileByName (cannot be bypassed
+			// via --profile-name).
+			named, err := resolveProfile(rt, "", *profileName, *folderID)
+			if err != nil {
+				return err
+			}
+			if err := ensureProxyBeforeStart(rt, named.ID, *skipProxyCheck, *proxyThreshold, *proxyHardCap); err != nil {
+				return err
+			}
 			resp, err := rt.Client.Workflows.StartProfileByName(
 				context.Background(),
 				*profileName,
@@ -237,35 +250,129 @@ func runLauncherStart(args []string, global globalOptions) error {
 		if err != nil {
 			return err
 		}
-		startResp, _, err := rt.Client.Launcher.Start(
-			context.Background(),
+		started, err := startProfileWithProxyCheck(
+			rt,
 			firstNonEmpty(*folderID, profile.FolderID),
 			profile.ID,
 			opts,
+			effectiveWait,
+			*skipProxyCheck,
+			*proxyThreshold,
+			*proxyHardCap,
 		)
 		if err != nil {
 			return err
 		}
-		if !effectiveWait {
-			return emit(rt, startResp)
-		}
-
-		statusResp, _, err := rt.Client.Launcher.WaitForRunning(
-			context.Background(),
-			profile.ID,
-			rt.Config.PollOptions(),
-		)
-		if err != nil {
-			return err
+		if !started.Waited {
+			return emit(rt, started.StartResponse)
 		}
 
 		return emit(rt, map[string]any{
 			"profile":         profile,
-			"start_response":  startResp,
-			"runtime_status":  statusResp,
+			"start_response":  started.StartResponse,
+			"runtime_status":  started.RuntimeStatus,
 			"automation_type": startAutomation,
 		})
 	})
+}
+
+// startedProfile carries the launcher responses produced by
+// startProfileWithProxyCheck so callers can build their own emit shape.
+// RuntimeStatus is nil unless the caller requested a wait for running status.
+// Waited records whether a wait was requested, so callers can reproduce their
+// exact emit shape even if WaitForRunning yields a nil status.
+type startedProfile struct {
+	StartResponse *mlx.StartProfileResponse
+	RuntimeStatus *mlx.ProfileRuntimeStatusResponse
+	Waited        bool
+}
+
+// startProfileWithProxyCheck runs the fail-closed proxy continuity check for
+// profileID and then launches it via the launcher, optionally waiting for the
+// running status. The proxy check always runs first (unless skipProxyCheck is
+// set), so an unhealthy proxy prevents the launch (fail-closed). It is shared
+// by `launcher start` (id branch) and `profile create --start`.
+func startProfileWithProxyCheck(
+	rt *Runtime,
+	folderID, profileID string,
+	opts mlx.StartProfileOptions,
+	wait, skipProxyCheck bool,
+	thresholdOverride, hardCapOverride int,
+) (*startedProfile, error) {
+	if err := ensureProxyBeforeStart(rt, profileID, skipProxyCheck, thresholdOverride, hardCapOverride); err != nil {
+		return nil, err
+	}
+	startResp, _, err := rt.Client.Launcher.Start(
+		context.Background(),
+		folderID,
+		profileID,
+		opts,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if !wait {
+		return &startedProfile{StartResponse: startResp}, nil
+	}
+	statusResp, _, err := rt.Client.Launcher.WaitForRunning(
+		context.Background(),
+		profileID,
+		rt.Config.PollOptions(),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return &startedProfile{StartResponse: startResp, RuntimeStatus: statusResp, Waited: true}, nil
+}
+
+// ensureProxyBeforeStart runs the fail-closed proxy continuity check for the
+// given profile before it is launched. When proxy continuity is disabled or
+// skip is set, it is a no-op. On ANY proxy-check error it returns the error so
+// the caller does NOT start the profile (fail-closed). If a healthier proxy is
+// chosen, it is patched onto the profile before returning.
+func ensureProxyBeforeStart(rt *Runtime, profileID string, skip bool, thresholdOverride, hardCapOverride int) error {
+	if !rt.Config.Defaults.Proxy.Continuity.Enabled || skip {
+		return nil
+	}
+
+	meta, _, err := rt.Client.Profiles.GetMeta(context.Background(), profileID)
+	if err != nil {
+		return err
+	}
+	var current *mlx.Proxy
+	if meta != nil && meta.Parameters != nil {
+		current = meta.Parameters.Proxy
+	}
+
+	pc := rt.Config.Defaults.Proxy.Continuity
+	chosen, changed, err := rt.Client.Proxies.EnsureHealthyProxy(
+		context.Background(),
+		current,
+		mlx.EnsureHealthyProfileProxyOptions{
+			EnsureHealthyProxyOptions: mlx.EnsureHealthyProxyOptions{
+				ThresholdMs:        firstPositive(thresholdOverride, pc.LatencyThresholdMs),
+				HardCapMs:          firstPositive(hardCapOverride, pc.LatencyHardCapMs),
+				CandidatesPerRound: pc.CandidatesPerRound,
+				Checker: mlx.NewHTTPProxyChecker(mlx.HTTPProxyCheckerConfig{
+					Targets:          pc.CheckTargets,
+					PerTargetTimeout: pc.CheckTimeout.Duration(),
+				}),
+			},
+			PreferSOCKS5: rt.Config.Defaults.Proxy.PreferSOCKS5,
+			SaveTraffic:  rt.Config.Defaults.Proxy.SaveTraffic,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("pre-launch proxy check failed: %w", err)
+	}
+	if changed {
+		patch := &mlx.PatchProfileRequest{ProfileID: profileID, Proxy: chosen}
+		if _, _, err := rt.Client.Profiles.Patch(context.Background(), patch); err != nil {
+			return fmt.Errorf("apply replacement proxy: %w", err)
+		}
+	}
+	return nil
 }
 
 func runLauncherStop(args []string, global globalOptions) error {
@@ -567,6 +674,22 @@ func runProfileCreate(args []string, global globalOptions, forceLocal ...bool) e
 		"proxy-save-traffic",
 		"save traffic in the generated profile proxy",
 	)
+	country := fs.String(
+		"country",
+		"",
+		"ISO country code; sets language/locale/timezone",
+	)
+	browser := fs.String("browser", "", "browser type: mimic|stealth")
+	osFlag := fs.String("os", "", "os type: windows|macos|linux")
+	lang := fs.String(
+		"lang",
+		"",
+		"override browser UI language, e.g. de-DE",
+	)
+	times := fs.Int("times", 0, "number of profiles to create")
+	notes := fs.String("notes", "", "profile notes")
+	tagsCSV := fs.String("tags", "", "comma-separated tags")
+	start := fs.Bool("start", false, "launch the profile after creation")
 	wait := fs.Bool("wait", false, "verify created profile metas")
 	help := fs.Bool("help", false, "show help")
 	if err := fs.Parse(args); err != nil {
@@ -575,7 +698,9 @@ func runProfileCreate(args []string, global globalOptions, forceLocal ...bool) e
 	if *help {
 		fmt.Fprintln(
 			os.Stdout,
-			"Usage: mlx profile create --file <request.json> [--wait]\n       mlx profile create --template-id <template-id> --name <name> [--folder-id <id>] [--local] [--managed-proxy] [--proxy-country <code>] [--proxy-region <name>] [--proxy-city <name>] [--wait]",
+			"Usage: mlx profile create --file <request.json> [--wait]\n"+
+				"       mlx profile create --template-id <template-id> --name <name> [--folder-id <id>] [--local] [--managed-proxy] [--proxy-country <code>] [--proxy-region <name>] [--proxy-city <name>] [--wait]\n"+
+				"       mlx profile create --name <name> [--country <code>] [--browser <type>] [--os <type>] [--lang <locale>] [--folder-id <id>] [--local] [--times <n>] [--notes <text>] [--tags <a,b>] [--managed-proxy] [--proxy-country <code>] [--wait]",
 		)
 		return nil
 	}
@@ -585,15 +710,90 @@ func runProfileCreate(args []string, global globalOptions, forceLocal ...bool) e
 	if strings.TrimSpace(*file) != "" && strings.TrimSpace(*templateID) != "" {
 		return errors.New("--file and --template-id are mutually exclusive")
 	}
-	if strings.TrimSpace(*file) == "" && strings.TrimSpace(*templateID) == "" {
-		return errors.New("one of --file or --template-id is required")
+	mode := ""
+	switch {
+	case strings.TrimSpace(*file) != "":
+		mode = "file"
+	case strings.TrimSpace(*templateID) != "":
+		mode = "template"
+	case strings.TrimSpace(*name) != "":
+		mode = "flags"
+	default:
+		return errors.New("one of --file, --template-id, or --name is required")
+	}
+
+	if *start && *wait {
+		return errors.New("--start cannot be combined with --wait; run create without --wait (or start the profile separately)")
 	}
 
 	var req mlx.CreateProfileRequest
-	usingTemplate := strings.TrimSpace(*templateID) != ""
 
 	return withRuntime(global, func(rt *Runtime) error {
-		if !usingTemplate {
+		if mode == "flags" {
+			resolvedFolderID, err := resolveFolderID(rt, *folderID)
+			if err != nil {
+				return err
+			}
+			effBrowser := firstNonEmpty(
+				strings.TrimSpace(*browser),
+				rt.Config.Defaults.Profile.BrowserType,
+			)
+			effOS := firstNonEmpty(
+				strings.TrimSpace(*osFlag),
+				rt.Config.Defaults.Profile.OSType,
+			)
+			effLocal := local.ValueOr(false)
+			if len(forceLocal) > 0 {
+				effLocal = forceLocal[0]
+			}
+			built, err := buildCreateProfileRequestFromFlags(createFromFlagsInput{
+				Name:        *name,
+				BrowserType: effBrowser,
+				OSType:      effOS,
+				Country:     strings.TrimSpace(*country),
+				Lang:        *lang,
+				FolderID:    resolvedFolderID,
+				IsLocal:     effLocal,
+				Times:       *times,
+				Notes:       *notes,
+				Tags:        splitCSV(*tagsCSV),
+			})
+			if err != nil {
+				return err
+			}
+			req = *built
+
+			if *managedProxy || strings.TrimSpace(*proxyCountry) != "" {
+				generated, err := rt.Client.Proxies.GenerateProfileProxy(
+					context.Background(),
+					&mlx.GenerateProfileProxyRequest{
+						GenerateProxyRequest: *buildGenerateProxyRequest(
+							rt.Config,
+							firstNonEmpty(*proxyCountry, *country),
+							*proxyRegion,
+							*proxyCity,
+							*proxyProtocol,
+							*proxySessionType,
+							*proxyIPTTL,
+							1,
+							*proxyStrict,
+						),
+						PreferSOCKS5: strings.TrimSpace(*proxyProtocol) == "" &&
+							rt.Config.Defaults.Proxy.PreferSOCKS5,
+						SaveTraffic: proxySaveTraffic.ValueOr(
+							rt.Config.Defaults.Proxy.SaveTraffic,
+						),
+					},
+				)
+				if err != nil {
+					return err
+				}
+				if req.Parameters == nil {
+					req.Parameters = &mlx.ProfileParameters{}
+				}
+				req.Parameters.Proxy = generated.ProfileProxy
+			}
+		} else if mode == "file" {
 			if err := readJSONFile(*file, &req); err != nil {
 				return err
 			}
@@ -690,7 +890,39 @@ func runProfileCreate(args []string, global globalOptions, forceLocal ...bool) e
 			return err
 		}
 
-		return emit(rt, resp)
+		if !*start {
+			return emit(rt, resp)
+		}
+		if len(resp.Data.IDs) == 0 {
+			return errors.New("--start: create returned no profile ids to launch")
+		}
+
+		startedID := resp.Data.IDs[0]
+		startOpts := mlx.StartProfileOptions{
+			AutomationType: mlx.AutomationType(rt.Config.Defaults.Launcher.AutomationType),
+			Headless:       rt.Config.Defaults.Launcher.Headless,
+			StrictMode:     rt.Config.Defaults.Launcher.StrictMode,
+		}
+		// The fail-closed proxy continuity check runs inside the shared starter
+		// before the launch; an unhealthy proxy prevents the profile launch.
+		started, err := startProfileWithProxyCheck(
+			rt,
+			firstNonEmpty(*folderID, req.FolderID),
+			startedID,
+			startOpts,
+			false,
+			false,
+			0,
+			0,
+		)
+		if err != nil {
+			return err
+		}
+
+		return emit(rt, map[string]any{
+			"create": resp,
+			"start":  started.StartResponse,
+		})
 	})
 }
 

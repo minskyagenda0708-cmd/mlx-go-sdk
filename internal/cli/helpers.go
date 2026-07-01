@@ -13,6 +13,99 @@ import (
 	mlx "github.com/minskyagenda0708-cmd/mlx-go-sdk"
 )
 
+// defaultProfileFlags returns sane antidetect masking defaults for a
+// flag-created profile so it is not left "raw". All masking values are
+// centralized here (see plan Open Question O1).
+//
+// Values use the API-valid masking enum (mask/natural/disabled). "custom" is
+// only accepted by the create API when explicit custom fingerprint values are
+// also supplied; using it here caused a 400 "wrong audio masking flag". These
+// defaults mirror the live-validated e2e reference request.
+func defaultProfileFlags() *mlx.ProfileFlags {
+	return &mlx.ProfileFlags{
+		AudioMasking:        "natural",
+		FontsMasking:        "mask",
+		GeolocationMasking:  "mask",
+		GeolocationPopup:    "prompt",
+		GraphicsMasking:     "mask",
+		GraphicsNoise:       "mask",
+		LocalizationMasking: "mask",
+		MediaDevicesMasking: "natural",
+		NavigatorMasking:    "mask",
+		PortsMasking:        "mask",
+		ProxyMasking:        "disabled",
+		ScreenMasking:       "mask",
+		TimezoneMasking:     "mask",
+		WebRTCMasking:       "mask",
+	}
+}
+
+// createFromFlagsInput carries the CLI flag values used to build a
+// fully-localized CreateProfileRequest without a template.
+type createFromFlagsInput struct {
+	Name        string
+	BrowserType string
+	OSType      string
+	Country     string
+	Lang        string
+	FolderID    string
+	IsLocal     bool
+	Times       int
+	Notes       string
+	Tags        []string
+}
+
+// buildCreateProfileRequestFromFlags builds a fully-localized CreateProfileRequest
+// from CLI flags, with antidetect masking defaults and screen >= 1920x1080.
+func buildCreateProfileRequestFromFlags(in createFromFlagsInput) (*mlx.CreateProfileRequest, error) {
+	if strings.TrimSpace(in.Name) == "" {
+		return nil, fmt.Errorf("--name is required")
+	}
+	if strings.TrimSpace(in.FolderID) == "" {
+		return nil, fmt.Errorf("--folder-id is required (or set defaults.folder.id)")
+	}
+
+	locale := mlx.LocaleForCountry(in.Country) // falls back to US when empty/unknown
+
+	screenOpts := mlx.PatchProfileForProxyOptions{}
+	screen := mlx.PickScreenResolution(screenOpts)
+
+	langValue := strings.TrimSpace(in.Lang)
+	if langValue == "" {
+		langValue = locale.Localization.Locale
+	}
+
+	times := in.Times
+	if times <= 0 {
+		times = 1
+	}
+
+	return &mlx.CreateProfileRequest{
+		Name:        in.Name,
+		BrowserType: in.BrowserType,
+		OSType:      in.OSType,
+		FolderID:    in.FolderID,
+		Times:       times,
+		Notes:       in.Notes,
+		Tags:        in.Tags,
+		Parameters: &mlx.ProfileParameters{
+			Flags:   defaultProfileFlags(),
+			Storage: &mlx.Storage{IsLocal: in.IsLocal},
+			Fingerprint: &mlx.Fingerprint{
+				Localization: locale.Localization,
+				Timezone:     locale.Timezone,
+				Screen:       screen,
+				CMDParams: &mlx.CommandParams{
+					Params: []mlx.CommandParam{
+						{Flag: "--lang", Value: langValue},
+						{Flag: "--window-size", Value: fmt.Sprintf("%d,%d", screen.Width, screen.Height)},
+					},
+				},
+			},
+		},
+	}, nil
+}
+
 func readJSONFile(path string, out any) error {
 	file, err := os.Open(path)
 	if err != nil {
@@ -471,6 +564,14 @@ func firstNonEmpty(values ...string) string {
 	}
 
 	return ""
+}
+
+// firstPositive returns a if it is positive, otherwise b.
+func firstPositive(a, b int) int {
+	if a > 0 {
+		return a
+	}
+	return b
 }
 
 func isAlreadyStoppedError(err error) bool {

@@ -286,11 +286,16 @@ Flags:
 - `--headless`
 - `--strict`
 - `--wait`
+- `--skip-proxy-check` (DANGER: bypasses the fail-closed proxy continuity check; the profile launches even if its proxy is unhealthy or unreachable)
+- `--proxy-threshold-ms <n>` (override the soft latency threshold in milliseconds for this launch)
+- `--proxy-hard-cap-ms <n>` (override the hard latency cap in milliseconds for this launch)
 
 Notes:
 
 - when you use `--profile-name`, the CLI uses the workflow helper for exact-name resolution
 - `--wait` waits for a running status using the configured polling policy
+- when proxy continuity is enabled (`defaults.proxy_continuity`), the CLI runs a fail-closed proxy health check before launching; an unhealthy or unreachable proxy aborts the start (see [proxy-workflows.md](proxy-workflows.md#proxy-continuity))
+- `--proxy-threshold-ms` / `--proxy-hard-cap-ms` override the configured two-tier latency thresholds for a single launch; `--skip-proxy-check` disables the check entirely
 
 ### `mlx launcher stop`
 
@@ -390,6 +395,7 @@ Usage:
     mlx profile create --template-id tpl-123 --name "Demo"
     mlx profile create --template-id tpl-123 --name "Demo" --folder-id folder-123 --local --wait
     mlx profile create --template-id tpl-123 --name "Demo" --folder-id folder-123 --managed-proxy --proxy-country us
+    mlx profile create --template-id tpl-123 --name "Demo" --folder-id folder-123 --managed-proxy --proxy-country us --start
 
 JSON payload mode:
 
@@ -417,6 +423,13 @@ Template mode:
 - `--folder-id` supplies the destination folder when the template does not already encode the target folder
 - `--local` forces `parameters.storage.is_local=true`
 - `--managed-proxy` generates an MLX managed proxy and applies it to the created profile request before creation
+
+Launch after creation:
+
+- `--start` launches the first created profile immediately after creation (non-`--wait` mode only)
+- `--start` cannot be combined with `--wait`; run create without `--wait` to use it
+- when proxy continuity is enabled, the same fail-closed proxy health check used by `mlx launcher start` runs before the launch, so a created profile with an unhealthy or unreachable proxy will not be launched (see [proxy-workflows.md](proxy-workflows.md#proxy-continuity))
+- output is a combined object: `{"create": <create response>, "start": <start response>}`
 
 Common proxy flags for template mode:
 

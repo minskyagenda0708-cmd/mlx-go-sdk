@@ -32,6 +32,7 @@ type ProxyService interface {
 	ParseConnectionString(string, ProxyProtocol) (*GeneratedProxyConnection, error)
 	BuildProfileProxy(*GeneratedProxyConnection) *Proxy
 	GenerateProfileProxy(context.Context, *GenerateProfileProxyRequest) (*GenerateProfileProxyResult, error)
+	EnsureHealthyProxy(context.Context, *Proxy, EnsureHealthyProfileProxyOptions) (*Proxy, bool, error)
 }
 
 // ProxyServiceOp is the concrete proxy service implementation.
