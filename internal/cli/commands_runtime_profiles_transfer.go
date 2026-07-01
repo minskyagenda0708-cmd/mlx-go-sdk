@@ -263,7 +263,7 @@ func runLauncherStart(args []string, global globalOptions) error {
 		if err != nil {
 			return err
 		}
-		if started.RuntimeStatus == nil {
+		if !started.Waited {
 			return emit(rt, started.StartResponse)
 		}
 
@@ -279,9 +279,12 @@ func runLauncherStart(args []string, global globalOptions) error {
 // startedProfile carries the launcher responses produced by
 // startProfileWithProxyCheck so callers can build their own emit shape.
 // RuntimeStatus is nil unless the caller requested a wait for running status.
+// Waited records whether a wait was requested, so callers can reproduce their
+// exact emit shape even if WaitForRunning yields a nil status.
 type startedProfile struct {
 	StartResponse *mlx.StartProfileResponse
 	RuntimeStatus *mlx.ProfileRuntimeStatusResponse
+	Waited        bool
 }
 
 // startProfileWithProxyCheck runs the fail-closed proxy continuity check for
@@ -311,7 +314,6 @@ func startProfileWithProxyCheck(
 	if !wait {
 		return &startedProfile{StartResponse: startResp}, nil
 	}
-
 	statusResp, _, err := rt.Client.Launcher.WaitForRunning(
 		context.Background(),
 		profileID,
@@ -321,7 +323,7 @@ func startProfileWithProxyCheck(
 		return nil, err
 	}
 
-	return &startedProfile{StartResponse: startResp, RuntimeStatus: statusResp}, nil
+	return &startedProfile{StartResponse: startResp, RuntimeStatus: statusResp, Waited: true}, nil
 }
 
 // ensureProxyBeforeStart runs the fail-closed proxy continuity check for the
