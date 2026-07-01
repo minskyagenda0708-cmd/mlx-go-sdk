@@ -129,7 +129,6 @@ func ensureHealthyProxy(ctx context.Context, current *Proxy, gen proxyGenerator,
 // EnsureHealthyProfileProxyOptions configures the service-level continuity check.
 type EnsureHealthyProfileProxyOptions struct {
 	EnsureHealthyProxyOptions
-	Region       string
 	PreferSOCKS5 bool
 	SaveTraffic  bool
 }
