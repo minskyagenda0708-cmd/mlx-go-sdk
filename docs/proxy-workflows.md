@@ -64,3 +64,61 @@ if err != nil {
 fmt.Println(result.ProfileProxy.Type)
 fmt.Println(result.Connection.Country, result.Connection.Region, result.Connection.City)
 ```
+
+## Proxy continuity
+
+Proxy continuity is a launch-time safeguard that verifies a profile's proxy is healthy *before* the profile is started, and transparently rotates to a geography-preserving replacement when the current proxy is dead or too slow. It backs the CLI's `mlx launcher start` and `mlx profile create --start` flows (via `Proxies.EnsureHealthyProxy(...)`).
+
+### Fail-closed
+
+The check is **fail-closed**: if proxy continuity is enabled and no healthy proxy can be confirmed — or any step of the check errors (meta lookup, generation, health probe) — the launch is aborted and the profile is **not** started. A profile is never launched on an unhealthy or unreachable proxy. The only way to bypass the check is the explicit `--skip-proxy-check` flag (see the DANGER note below).
+
+### Two-tier latency thresholds
+
+Health is judged against two latency tiers (defaults shown):
+
+- **Threshold — `2000ms`**: the preferred ceiling. The current proxy is kept as-is if it is alive and at or under the threshold, and tier-1 selection prefers the fastest candidate at or under it.
+- **Hard cap — `3000ms`**: the escalation ceiling. If no candidate meets the threshold, the fastest alive candidate at or under the hard cap is chosen. If nothing is alive within the hard cap, the launch fails.
+
+Both are configurable and can be overridden per-launch with `--proxy-threshold-ms` / `--proxy-hard-cap-ms`.
+
+### Selection order: keep-healthy-current, then city → country
+
+1. **Current proxy first** — if the profile's existing proxy is alive and at or under the threshold, it is kept unchanged (no rotation, no patch).
+2. **Same city** — if the current proxy fails and a `city` affinity is known, generate `candidates_per_round` replacements preserving `country`/`region`/`city`.
+3. **Same country** — if the city round yields nothing acceptable (or no city is known), generate replacements preserving `country`/`region` only.
+
+The best candidate across all rounds is chosen under the two-tier rule.
+
+### Proxy-only patch
+
+When a replacement proxy is selected (i.e. the current one was not kept), the CLI applies a **proxy-only patch** to the profile (`PatchProfileRequest{ProfileID, Proxy}`) before launching. No other profile fields are touched. If the current proxy was healthy, no patch is made.
+
+### `--skip-proxy-check` (DANGER)
+
+`--skip-proxy-check` bypasses the entire continuity check. The profile launches even if its proxy is dead, unreachable, or slower than the hard cap. This defeats the fail-closed guarantee — use it only when you knowingly want to launch without proxy validation.
+
+### Config: `defaults.proxy_continuity`
+
+```json
+{
+  "defaults": {
+    "proxy": {
+      "proxy_continuity": {
+        "enabled": true,
+        "latency_threshold_ms": 2000,
+        "latency_hard_cap_ms": 3000,
+        "candidates_per_round": 5,
+        "check_targets": ["https://www.google.com", "https://www.facebook.com", "https://medium.com"],
+        "check_timeout": "10s"
+      }
+    }
+  }
+}
+```
+
+- `enabled` — turn the launch-time check on/off. When disabled, `--start` and `launcher start` launch without any proxy validation.
+- `latency_threshold_ms` / `latency_hard_cap_ms` — the two-tier ceilings described above.
+- `candidates_per_round` — how many replacement proxies to generate per geo round.
+- `check_targets` — the browser-common URLs probed to measure proxy health.
+- `check_timeout` — per-target probe timeout.

@@ -71,6 +71,7 @@ Examples:
   mlx launcher health
   mlx profile list --search Demo
   mlx profile create --template-id tpl-123 --name "Demo Local" --local --managed-proxy --proxy-country us
+  mlx profile create --template-id tpl-123 --name "Demo Local" --local --managed-proxy --proxy-country us --start
   mlx export run --profile-name Demo --root-dir C:\exports
   mlx import run --import-path C:\exports\demo.zip --wait
   mlx extension enable --id ext-1 --profile-name Demo
@@ -135,6 +136,7 @@ Subcommands:
   status --profile-id <id> | --profile-name <name>
   statuses
   start --profile-id <id> | --profile-name <name> [--folder-id <id>] [--automation-type <type>] [--headless] [--strict] [--wait]
+        [--skip-proxy-check] [--proxy-threshold-ms <n>] [--proxy-hard-cap-ms <n>]
   stop --profile-id <id> | --profile-name <name> [--folder-id <id>] [--ignore-already-stopped] [--wait]
   stop-all [--type <cloud|local|quick>]
   quick-start [--browser-type TYPE] [--os-type TYPE] [--automation-type TYPE] [--headless] [--core-version N] [--core-minor-version N] [--wait]
@@ -150,7 +152,7 @@ Subcommands:
   list [--search <text>] [--removed] [--limit <n>] [--offset <n>] [--storage-type <all|local|cloud>]
   get --id <id> | --name <name>
   create --file <request.json> [--wait]
-  create --template-id <template-id> --name <name> [--folder-id <id>] [--local] [--managed-proxy] [--proxy-country <code>] [--proxy-region <name>] [--proxy-city <name>]
+  create --template-id <template-id> --name <name> [--folder-id <id>] [--local] [--managed-proxy] [--proxy-country <code>] [--proxy-region <name>] [--proxy-city <name>] [--start]
   create-local --template-id <template-id> --name <name> [--folder-id <id>] [--managed-proxy] [--proxy-country <code>] [--proxy-region <name>] [--proxy-city <name>]
   create-cloud --template-id <template-id> --name <name> [--folder-id <id>] [--managed-proxy] [--proxy-country <code>] [--proxy-region <name>] [--proxy-city <name>]
   update --file <request.json>

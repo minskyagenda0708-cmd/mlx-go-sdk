@@ -250,38 +250,78 @@ func runLauncherStart(args []string, global globalOptions) error {
 		if err != nil {
 			return err
 		}
-		if err := ensureProxyBeforeStart(rt, profile.ID, *skipProxyCheck, *proxyThreshold, *proxyHardCap); err != nil {
-			return err
-		}
-		startResp, _, err := rt.Client.Launcher.Start(
-			context.Background(),
+		started, err := startProfileWithProxyCheck(
+			rt,
 			firstNonEmpty(*folderID, profile.FolderID),
 			profile.ID,
 			opts,
+			effectiveWait,
+			*skipProxyCheck,
+			*proxyThreshold,
+			*proxyHardCap,
 		)
 		if err != nil {
 			return err
 		}
-		if !effectiveWait {
-			return emit(rt, startResp)
-		}
-
-		statusResp, _, err := rt.Client.Launcher.WaitForRunning(
-			context.Background(),
-			profile.ID,
-			rt.Config.PollOptions(),
-		)
-		if err != nil {
-			return err
+		if started.RuntimeStatus == nil {
+			return emit(rt, started.StartResponse)
 		}
 
 		return emit(rt, map[string]any{
 			"profile":         profile,
-			"start_response":  startResp,
-			"runtime_status":  statusResp,
+			"start_response":  started.StartResponse,
+			"runtime_status":  started.RuntimeStatus,
 			"automation_type": startAutomation,
 		})
 	})
+}
+
+// startedProfile carries the launcher responses produced by
+// startProfileWithProxyCheck so callers can build their own emit shape.
+// RuntimeStatus is nil unless the caller requested a wait for running status.
+type startedProfile struct {
+	StartResponse *mlx.StartProfileResponse
+	RuntimeStatus *mlx.ProfileRuntimeStatusResponse
+}
+
+// startProfileWithProxyCheck runs the fail-closed proxy continuity check for
+// profileID and then launches it via the launcher, optionally waiting for the
+// running status. The proxy check always runs first (unless skipProxyCheck is
+// set), so an unhealthy proxy prevents the launch (fail-closed). It is shared
+// by `launcher start` (id branch) and `profile create --start`.
+func startProfileWithProxyCheck(
+	rt *Runtime,
+	folderID, profileID string,
+	opts mlx.StartProfileOptions,
+	wait, skipProxyCheck bool,
+	thresholdOverride, hardCapOverride int,
+) (*startedProfile, error) {
+	if err := ensureProxyBeforeStart(rt, profileID, skipProxyCheck, thresholdOverride, hardCapOverride); err != nil {
+		return nil, err
+	}
+	startResp, _, err := rt.Client.Launcher.Start(
+		context.Background(),
+		folderID,
+		profileID,
+		opts,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if !wait {
+		return &startedProfile{StartResponse: startResp}, nil
+	}
+
+	statusResp, _, err := rt.Client.Launcher.WaitForRunning(
+		context.Background(),
+		profileID,
+		rt.Config.PollOptions(),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return &startedProfile{StartResponse: startResp, RuntimeStatus: statusResp}, nil
 }
 
 // ensureProxyBeforeStart runs the fail-closed proxy continuity check for the
@@ -680,8 +720,9 @@ func runProfileCreate(args []string, global globalOptions, forceLocal ...bool) e
 		return errors.New("one of --file, --template-id, or --name is required")
 	}
 
-	// TODO(task 9): wire --start to launch the profile after creation.
-	_ = start
+	if *start && *wait {
+		return errors.New("--start cannot be combined with --wait; run create without --wait (or start the profile separately)")
+	}
 
 	var req mlx.CreateProfileRequest
 
@@ -847,7 +888,39 @@ func runProfileCreate(args []string, global globalOptions, forceLocal ...bool) e
 			return err
 		}
 
-		return emit(rt, resp)
+		if !*start {
+			return emit(rt, resp)
+		}
+		if len(resp.Data.IDs) == 0 {
+			return errors.New("--start: create returned no profile ids to launch")
+		}
+
+		startedID := resp.Data.IDs[0]
+		startOpts := mlx.StartProfileOptions{
+			AutomationType: mlx.AutomationType(rt.Config.Defaults.Launcher.AutomationType),
+			Headless:       rt.Config.Defaults.Launcher.Headless,
+			StrictMode:     rt.Config.Defaults.Launcher.StrictMode,
+		}
+		// The fail-closed proxy continuity check runs inside the shared starter
+		// before the launch; an unhealthy proxy prevents the profile launch.
+		started, err := startProfileWithProxyCheck(
+			rt,
+			firstNonEmpty(*folderID, req.FolderID),
+			startedID,
+			startOpts,
+			false,
+			false,
+			0,
+			0,
+		)
+		if err != nil {
+			return err
+		}
+
+		return emit(rt, map[string]any{
+			"create": resp,
+			"start":  started.StartResponse,
+		})
 	})
 }
 

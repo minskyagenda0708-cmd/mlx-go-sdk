@@ -722,6 +722,133 @@ func TestExecuteProfileCreateFromFlagsLocalizesForCountry(t *testing.T) {
 	}
 }
 
+func TestExecuteProfileCreateStartLaunchesCreatedProfile(t *testing.T) {
+	t.Setenv(mlx.EnvToken, "test-token")
+
+	var startHit bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/profile/create":
+			fmt.Fprint(w, `{"status":{"http_code":200,"message":""},"data":{"ids":["profile-1"]}}`)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v2/profile/f/f/p/profile-1/start"):
+			startHit = true
+			fmt.Fprint(w, `{"status":{"http_code":200,"message":"Profile started successfully"},"data":{"browser_type":"mimic","core_version":137,"id":"profile-1","is_quick":false,"port":"55513"}}`)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	// Continuity disabled keeps the test network-free (no proxy backend hit).
+	configPath := writeRuntimeConfigFile(t, fmt.Sprintf(`{
+  "version": "1",
+  "endpoints": {
+    "base_url": %q,
+    "launcher_url": %q
+  },
+  "output": {
+    "format": "json"
+  },
+  "retry": {
+    "enabled": false
+  },
+  "defaults": {
+    "launcher": {
+      "automation_type": "playwright"
+    },
+    "proxy": {
+      "proxy_continuity": {
+        "enabled": false
+      }
+    }
+  }
+}`, server.URL, server.URL))
+
+	output, err := captureCLIStdout(func() error {
+		return Execute([]string{"--config", configPath, "profile", "create", "--name", "x", "--browser", "mimic", "--os", "windows", "--folder-id", "f", "--start"})
+	})
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if !startHit {
+		t.Fatalf("expected --start to launch the created profile, but the start endpoint was not hit")
+	}
+	if !strings.Contains(output, `"create"`) || !strings.Contains(output, `"start"`) {
+		t.Fatalf("expected combined create+start output, got %s", output)
+	}
+	if !strings.Contains(output, `"port": "55513"`) {
+		t.Fatalf("expected start response in output, got %s", output)
+	}
+}
+
+func TestExecuteProfileCreateStartFailsClosedWhenProxyCheckFails(t *testing.T) {
+	t.Setenv(mlx.EnvToken, "test-token")
+
+	var startHit bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/profile/create":
+			fmt.Fprint(w, `{"status":{"http_code":200,"message":""},"data":{"ids":["profile-1"]}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/profile/metas":
+			// ensureProxyBeforeStart fetches the created profile's meta.
+			fmt.Fprint(w, `{"status":{"http_code":200,"message":""},"data":{"profiles":[{"id":"profile-1","name":"x","folder_id":"f","browser_type":"mimic","core_version":137,"os_type":"windows","workspace_id":"ws-1","created_at":"2026-04-20T00:00:00Z","created_by":"me@example.com","last_update_at":"2026-04-20T00:00:00Z","last_updated_by":"me@example.com","status":"ready","parameters":{"storage":{"is_local":false}}}]}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/user":
+			// Proxy backend unreachable -> fail-closed before launch.
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, `{"status":{"http_code":500,"message":"proxy backend unavailable"}}`)
+		case strings.HasPrefix(r.URL.Path, "/api/v2/profile/f/") && strings.HasSuffix(r.URL.Path, "/start"):
+			startHit = true
+			t.Fatalf("start endpoint must NEVER be hit when the proxy check fails (fail-closed): %s %s", r.Method, r.URL.Path)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	configPath := writeRuntimeConfigFile(t, fmt.Sprintf(`{
+  "version": "1",
+  "endpoints": {
+    "base_url": %q,
+    "launcher_url": %q,
+    "proxy_url": %q
+  },
+  "output": {
+    "format": "json"
+  },
+  "retry": {
+    "enabled": false
+  },
+  "defaults": {
+    "launcher": {
+      "automation_type": "playwright"
+    },
+    "proxy": {
+      "proxy_continuity": {
+        "enabled": true,
+        "latency_threshold_ms": 2000,
+        "latency_hard_cap_ms": 3000,
+        "candidates_per_round": 3,
+        "check_targets": ["http://127.0.0.1:1"],
+        "check_timeout": "1s"
+      }
+    }
+  }
+}`, server.URL, server.URL, server.URL))
+
+	_, err := captureCLIStdout(func() error {
+		return Execute([]string{"--config", configPath, "profile", "create", "--name", "x", "--browser", "mimic", "--os", "windows", "--folder-id", "f", "--start"})
+	})
+	if err == nil {
+		t.Fatalf("expected fail-closed error when proxy check fails on create --start, got nil")
+	}
+	if !strings.Contains(err.Error(), "proxy check failed") {
+		t.Fatalf("expected pre-launch proxy check error, got %v", err)
+	}
+	if startHit {
+		t.Fatalf("start endpoint was hit despite failed proxy check on create --start (NOT fail-closed)")
+	}
+}
+
 func captureCLIStdout(fn func() error) (string, error) {
 	oldStdout := os.Stdout
 	r, w, err := os.Pipe()
