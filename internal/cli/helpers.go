@@ -16,22 +16,27 @@ import (
 // defaultProfileFlags returns sane antidetect masking defaults for a
 // flag-created profile so it is not left "raw". All masking values are
 // centralized here (see plan Open Question O1).
+//
+// Values use the API-valid masking enum (mask/natural/disabled). "custom" is
+// only accepted by the create API when explicit custom fingerprint values are
+// also supplied; using it here caused a 400 "wrong audio masking flag". These
+// defaults mirror the live-validated e2e reference request.
 func defaultProfileFlags() *mlx.ProfileFlags {
 	return &mlx.ProfileFlags{
-		AudioMasking:        "custom",
-		FontsMasking:        "custom",
-		GeolocationMasking:  "custom",
-		GraphicsMasking:     "custom",
-		GraphicsNoise:       "custom",
-		LocalizationMasking: "custom",
-		MediaDevicesMasking: "custom",
-		NavigatorMasking:    "custom",
-		PortsMasking:        "custom",
-		ProxyMasking:        "custom",
-		ScreenMasking:       "custom",
-		TimezoneMasking:     "custom",
-		WebRTCMasking:       "custom",
-		CanvasNoise:         "custom",
+		AudioMasking:        "natural",
+		FontsMasking:        "mask",
+		GeolocationMasking:  "mask",
+		GeolocationPopup:    "prompt",
+		GraphicsMasking:     "mask",
+		GraphicsNoise:       "mask",
+		LocalizationMasking: "mask",
+		MediaDevicesMasking: "natural",
+		NavigatorMasking:    "mask",
+		PortsMasking:        "mask",
+		ProxyMasking:        "disabled",
+		ScreenMasking:       "mask",
+		TimezoneMasking:     "mask",
+		WebRTCMasking:       "mask",
 	}
 }
 

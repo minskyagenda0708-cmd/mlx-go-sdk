@@ -710,7 +710,8 @@ func TestExecuteProfileCreateFromFlagsLocalizesForCountry(t *testing.T) {
 		`"folder_id":"f"`,
 		`"locale":"de-DE"`,
 		`"zone":"Europe/Berlin"`,
-		`"localization_masking":"custom"`,
+		`"localization_masking":"mask"`,
+		`"audio_masking":"natural"`,
 	}
 	for _, check := range checks {
 		if !strings.Contains(createBody, check) {

@@ -7,9 +7,33 @@ func TestDefaultProfileFlagsSetsMasking(t *testing.T) {
 	if f == nil {
 		t.Fatal("expected non-nil flags")
 	}
-	if f.LocalizationMasking != "custom" || f.TimezoneMasking != "custom" ||
-		f.ScreenMasking != "custom" || f.ProxyMasking != "custom" {
-		t.Fatalf("expected custom masking, got %+v", f)
+	// The API rejects "custom" masking values unless explicit custom
+	// fingerprint values are also supplied (400 "wrong audio masking flag").
+	// Flag-only creation must use API-valid enum values: mask/natural/disabled.
+	valid := map[string]bool{"mask": true, "natural": true, "disabled": true, "prompt": true}
+	checks := map[string]string{
+		"audio_masking":        f.AudioMasking,
+		"fonts_masking":        f.FontsMasking,
+		"geolocation_masking":  f.GeolocationMasking,
+		"graphics_masking":     f.GraphicsMasking,
+		"graphics_noise":       f.GraphicsNoise,
+		"localization_masking": f.LocalizationMasking,
+		"media_devices_masking": f.MediaDevicesMasking,
+		"navigator_masking":    f.NavigatorMasking,
+		"ports_masking":        f.PortsMasking,
+		"proxy_masking":        f.ProxyMasking,
+		"screen_masking":       f.ScreenMasking,
+		"timezone_masking":     f.TimezoneMasking,
+		"webrtc_masking":       f.WebRTCMasking,
+	}
+	for name, val := range checks {
+		if !valid[val] {
+			t.Fatalf("%s must be an API-valid masking value (mask/natural/disabled), got %q", name, val)
+		}
+	}
+	// audio masking specifically must be "natural" per the live-validated e2e reference.
+	if f.AudioMasking != "natural" {
+		t.Fatalf("expected audio_masking=natural, got %q", f.AudioMasking)
 	}
 }
 
@@ -47,7 +71,7 @@ func TestBuildCreateProfileRequestFromFlagsGermany(t *testing.T) {
 	if req.Parameters.Storage == nil || !req.Parameters.Storage.IsLocal {
 		t.Fatal("expected local storage")
 	}
-	if req.Parameters.Flags == nil || req.Parameters.Flags.LocalizationMasking != "custom" {
+	if req.Parameters.Flags == nil || req.Parameters.Flags.LocalizationMasking != "mask" {
 		t.Fatal("expected masking flags applied")
 	}
 }
