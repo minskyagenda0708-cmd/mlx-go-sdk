@@ -224,6 +224,18 @@ type ProxyDefaultsConfig struct {
 	PreferSOCKS5 bool `json:"prefer_socks5"`
 	SaveTraffic  bool `json:"save_traffic"`
 	PatchProfile bool `json:"patch_profile"`
+
+	Continuity ProxyContinuityConfig `json:"proxy_continuity"`
+}
+
+// ProxyContinuityConfig controls launch-time proxy health checking and rotation.
+type ProxyContinuityConfig struct {
+	Enabled            bool     `json:"enabled"`
+	LatencyThresholdMs int      `json:"latency_threshold_ms"`
+	LatencyHardCapMs   int      `json:"latency_hard_cap_ms"`
+	CandidatesPerRound int      `json:"candidates_per_round"`
+	CheckTargets       []string `json:"check_targets"`
+	CheckTimeout       Duration `json:"check_timeout"`
 }
 
 // DefaultConfig returns normalized built-in CLI defaults.
@@ -303,6 +315,18 @@ func builtinDefaultConfig() Config {
 				PreferSOCKS5: true,
 				SaveTraffic:  false,
 				PatchProfile: true,
+				Continuity: ProxyContinuityConfig{
+					Enabled:            true,
+					LatencyThresholdMs: 2000,
+					LatencyHardCapMs:   3000,
+					CandidatesPerRound: 5,
+					CheckTargets: []string{
+						"https://www.google.com",
+						"https://www.facebook.com",
+						"https://medium.com",
+					},
+					CheckTimeout: Duration(10 * time.Second),
+				},
 			},
 		},
 	}

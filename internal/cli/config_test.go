@@ -348,3 +348,23 @@ func TestLoadRuntimeBuildsClientFromResolvedConfig(t *testing.T) {
 		t.Fatalf("unexpected runtime user agent: %q", rt.Config.Transport.UserAgent)
 	}
 }
+
+func TestDefaultConfigProxyContinuity(t *testing.T) {
+	cfg := DefaultConfig()
+	pc := cfg.Defaults.Proxy.Continuity
+	if !pc.Enabled {
+		t.Fatal("expected continuity enabled by default")
+	}
+	if pc.LatencyThresholdMs != 2000 || pc.LatencyHardCapMs != 3000 {
+		t.Fatalf("unexpected thresholds: %+v", pc)
+	}
+	if pc.CandidatesPerRound != 5 {
+		t.Fatalf("unexpected candidates_per_round: %d", pc.CandidatesPerRound)
+	}
+	if len(pc.CheckTargets) == 0 {
+		t.Fatal("expected default check targets")
+	}
+	if pc.CheckTimeout.IsZero() {
+		t.Fatal("expected non-zero check timeout")
+	}
+}
