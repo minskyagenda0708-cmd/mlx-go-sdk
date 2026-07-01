@@ -121,6 +121,79 @@ func TestServiceEnsureHealthyProxyKeepsHealthyCurrentNoGenerate(t *testing.T) {
 	}
 }
 
+// recordingGen records the country passed to each generation round so tests
+// can assert the geo constraint actually propagates into replacement lookup.
+type recordingGen struct {
+	gotCountry     []string
+	cityProxies    []*Proxy
+	countryProxies []*Proxy
+}
+
+func (g *recordingGen) generate(_ context.Context, country, _, city string, _ int) ([]*Proxy, error) {
+	g.gotCountry = append(g.gotCountry, country)
+	if city != "" {
+		return g.cityProxies, nil
+	}
+	return g.countryProxies, nil
+}
+
+// TestEnsureHealthyProxyDerivesGeoFromUsername covers the root cause of the
+// live geo-mismatch: managed MLX proxies encode geography only inside the
+// username (e.g. "-country-be-sid-..."), leaving the structural Country/City
+// fields empty. Continuity must still preserve country by deriving it from the
+// username when the structural field is blank, otherwise replacement rounds
+// query with an empty country and can return an out-of-country exit node.
+func TestEnsureHealthyProxyDerivesGeoFromUsername(t *testing.T) {
+	current := &Proxy{
+		Host:     "cur",
+		Username: "2235470499_bc98e4f8_multilogin_com-country-be-sid-abc-filter-medium",
+		// Country/City intentionally empty: mirrors live GetMeta payload.
+	}
+	gen := &recordingGen{
+		countryProxies: []*Proxy{{Host: "n1", Username: "u-country-be-sid-z"}},
+	}
+	chk := mapChecker{byHost: map[string]ProxyCheckResult{
+		"cur": {Alive: false},
+		"n1":  {Alive: true, LatencyMs: 1000},
+	}}
+	got, changed, err := ensureHealthyProxy(context.Background(), current, gen, EnsureHealthyProxyOptions{Checker: chk})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !changed || got.Host != "n1" {
+		t.Fatalf("expected replacement n1, got host=%s changed=%v", got.Host, changed)
+	}
+	sawBE := false
+	for _, c := range gen.gotCountry {
+		if c == "be" {
+			sawBE = true
+		}
+	}
+	if !sawBE {
+		t.Fatalf("expected generation to request country \"be\" derived from username, got rounds=%v", gen.gotCountry)
+	}
+}
+
+// TestEnsureHealthyProxyRejectsGeoMismatchedReplacement is the defense-in-depth
+// half: even if a misbehaving gate returns an out-of-country node despite a
+// correct request, continuity must NOT hand it to a profile whose fingerprint
+// expects a different country. It must fail closed instead.
+func TestEnsureHealthyProxyRejectsGeoMismatchedReplacement(t *testing.T) {
+	current := &Proxy{Host: "cur", Username: "u-country-be-sid-a"}
+	gen := &fakeGen{
+		// Gate returns a DE node even though BE was requested.
+		countryProxies: []*Proxy{{Host: "de1", Username: "u-country-de-sid-b"}},
+	}
+	chk := mapChecker{byHost: map[string]ProxyCheckResult{
+		"cur": {Alive: false},
+		"de1": {Alive: true, LatencyMs: 900},
+	}}
+	_, _, err := ensureHealthyProxy(context.Background(), current, gen, EnsureHealthyProxyOptions{Checker: chk})
+	if err == nil {
+		t.Fatal("expected fail-closed error when replacement country does not match required country")
+	}
+}
+
 func TestEnsureHealthyProxyFailsClosedWhenNoneAlive(t *testing.T) {
 	current := &Proxy{Host: "cur", Country: "DE", City: "Berlin"}
 	gen := &fakeGen{

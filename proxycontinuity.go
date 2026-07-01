@@ -82,14 +82,7 @@ func ensureHealthyProxy(ctx context.Context, current *Proxy, gen proxyGenerator,
 		cands = append(cands, proxyCandidate{proxy: current, result: res})
 	}
 
-	country := ""
-	city := ""
-	region := ""
-	if current != nil {
-		country = strings.TrimSpace(current.Country)
-		city = strings.TrimSpace(current.City)
-		region = strings.TrimSpace(current.Region)
-	}
+	country, region, city := deriveProxyGeo(current)
 
 	// 2) Round A — same city (only if we have a city).
 	if city != "" {
@@ -116,7 +109,19 @@ func ensureHealthyProxy(ctx context.Context, current *Proxy, gen proxyGenerator,
 		}
 	}
 
-	// 4) Select under two-tier latency rule.
+	// 4) Select under two-tier latency rule, rejecting geo-mismatched nodes.
+	// Defense-in-depth: even if the gate returns an out-of-country node despite
+	// a correct request, never hand it to a profile whose fingerprint expects a
+	// different country. The current proxy is exempt (it defines the baseline).
+	if country != "" {
+		filtered := cands[:0:0]
+		for _, c := range cands {
+			if c.proxy == current || proxyCountryMatches(c.proxy, country) {
+				filtered = append(filtered, c)
+			}
+		}
+		cands = filtered
+	}
 	idx := selectBestProxy(cands, opts.ThresholdMs, opts.HardCapMs)
 	if idx == -1 {
 		return nil, false, fmt.Errorf("no healthy proxy found within %dms hard cap for country %q", opts.HardCapMs, country)
@@ -124,6 +129,61 @@ func ensureHealthyProxy(ctx context.Context, current *Proxy, gen proxyGenerator,
 	chosen := cands[idx].proxy
 	changed := chosen != current
 	return chosen, changed, nil
+}
+
+// deriveProxyGeo returns the country/region/city for a proxy, preferring the
+// structural fields but falling back to values encoded inside the MLX managed
+// username (e.g. "-country-be-region-x-city-y-sid-...") when those fields are
+// blank. Managed MLX proxies carry geography only in the username, so relying
+// on the structural fields alone silently drops the country constraint.
+func deriveProxyGeo(current *Proxy) (country, region, city string) {
+	if current == nil {
+		return "", "", ""
+	}
+	country = strings.TrimSpace(current.Country)
+	region = strings.TrimSpace(current.Region)
+	city = strings.TrimSpace(current.City)
+	if country != "" || region != "" || city != "" {
+		return country, region, city
+	}
+	uc, ur, ucity := parseProxyUsernameGeo(current.Username)
+	if country == "" {
+		country = uc
+	}
+	if region == "" {
+		region = ur
+	}
+	if city == "" {
+		city = ucity
+	}
+	return country, region, city
+}
+
+// parseProxyUsernameGeo extracts country/region/city tokens from an MLX managed
+// proxy username of the form "...-country-<c>-region-<r>-city-<ci>-sid-...".
+func parseProxyUsernameGeo(username string) (country, region, city string) {
+	parts := strings.Split(username, "-")
+	for i := 0; i < len(parts)-1; i++ {
+		switch parts[i] {
+		case "country":
+			country = parts[i+1]
+		case "region":
+			region = parts[i+1]
+		case "city":
+			city = parts[i+1]
+		}
+	}
+	return country, region, city
+}
+
+// proxyCountryMatches reports whether the proxy's country (structural or
+// username-encoded) equals want, case-insensitively.
+func proxyCountryMatches(p *Proxy, want string) bool {
+	if p == nil {
+		return false
+	}
+	c, _, _ := deriveProxyGeo(p)
+	return strings.EqualFold(strings.TrimSpace(c), strings.TrimSpace(want))
 }
 
 // EnsureHealthyProfileProxyOptions configures the service-level continuity check.
