@@ -11,7 +11,7 @@ import (
 	mlx "github.com/minskyagenda0708-cmd/mlx-go-sdk"
 )
 
-const CLIVersion = "dev"
+var CLIVersion = "dev"
 
 type globalOptions struct {
 	ConfigPath string
