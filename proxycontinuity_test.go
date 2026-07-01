@@ -1,6 +1,9 @@
 package mlx
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestSelectBestProxyPrefersUnderThreshold(t *testing.T) {
 	cands := []proxyCandidate{
@@ -30,5 +33,95 @@ func TestSelectBestProxyNoneWithinHardCap(t *testing.T) {
 	}
 	if got := selectBestProxy(cands, 2000, 3000); got != -1 {
 		t.Fatalf("expected -1 (none acceptable), got %d", got)
+	}
+}
+
+// fakeGen returns preset proxies per (city/country) round.
+type fakeGen struct {
+	cityProxies    []*Proxy
+	countryProxies []*Proxy
+}
+
+func (f *fakeGen) generate(_ context.Context, _, _, city string, _ int) ([]*Proxy, error) {
+	if city != "" {
+		return f.cityProxies, nil
+	}
+	return f.countryProxies, nil
+}
+
+// mapChecker returns a result per proxy Host.
+type mapChecker struct{ byHost map[string]ProxyCheckResult }
+
+func (m mapChecker) Check(_ context.Context, p *Proxy) ProxyCheckResult {
+	if p == nil {
+		return ProxyCheckResult{}
+	}
+	return m.byHost[p.Host]
+}
+
+func TestEnsureHealthyProxyKeepsHealthyCurrent(t *testing.T) {
+	current := &Proxy{Host: "cur", Country: "DE", City: "Berlin"}
+	chk := mapChecker{byHost: map[string]ProxyCheckResult{"cur": {Alive: true, LatencyMs: 800}}}
+	got, changed, err := ensureHealthyProxy(context.Background(), current, &fakeGen{}, EnsureHealthyProxyOptions{Checker: chk})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if changed {
+		t.Fatal("expected current proxy kept (changed=false)")
+	}
+	if got.Host != "cur" {
+		t.Fatalf("expected cur, got %s", got.Host)
+	}
+}
+
+func TestEnsureHealthyProxyReplacesFromCity(t *testing.T) {
+	current := &Proxy{Host: "cur", Country: "DE", City: "Berlin"}
+	gen := &fakeGen{cityProxies: []*Proxy{{Host: "c1", Country: "DE", City: "Berlin"}}}
+	chk := mapChecker{byHost: map[string]ProxyCheckResult{
+		"cur": {Alive: false},
+		"c1":  {Alive: true, LatencyMs: 1200},
+	}}
+	got, changed, err := ensureHealthyProxy(context.Background(), current, gen, EnsureHealthyProxyOptions{Checker: chk})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !changed || got.Host != "c1" {
+		t.Fatalf("expected replacement c1 (changed), got host=%s changed=%v", got.Host, changed)
+	}
+}
+
+func TestEnsureHealthyProxyFallsBackToCountry(t *testing.T) {
+	current := &Proxy{Host: "cur", Country: "DE", City: "Berlin"}
+	gen := &fakeGen{
+		cityProxies:    nil, // city round empty
+		countryProxies: []*Proxy{{Host: "n1", Country: "DE"}},
+	}
+	chk := mapChecker{byHost: map[string]ProxyCheckResult{
+		"cur": {Alive: false},
+		"n1":  {Alive: true, LatencyMs: 1800},
+	}}
+	got, changed, err := ensureHealthyProxy(context.Background(), current, gen, EnsureHealthyProxyOptions{Checker: chk})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !changed || got.Host != "n1" {
+		t.Fatalf("expected country replacement n1, got host=%s changed=%v", got.Host, changed)
+	}
+}
+
+func TestEnsureHealthyProxyFailsClosedWhenNoneAlive(t *testing.T) {
+	current := &Proxy{Host: "cur", Country: "DE", City: "Berlin"}
+	gen := &fakeGen{
+		cityProxies:    []*Proxy{{Host: "c1"}},
+		countryProxies: []*Proxy{{Host: "n1"}},
+	}
+	chk := mapChecker{byHost: map[string]ProxyCheckResult{
+		"cur": {Alive: false},
+		"c1":  {Alive: false},
+		"n1":  {Alive: true, LatencyMs: 5000}, // over hard cap
+	}}
+	_, _, err := ensureHealthyProxy(context.Background(), current, gen, EnsureHealthyProxyOptions{Checker: chk})
+	if err == nil {
+		t.Fatal("expected fail-closed error when no healthy proxy exists")
 	}
 }

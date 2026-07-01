@@ -1,5 +1,11 @@
 package mlx
 
+import (
+	"context"
+	"fmt"
+	"strings"
+)
+
 // EnsureHealthyProxyOptions tunes proxy-continuity behavior.
 type EnsureHealthyProxyOptions struct {
 	ThresholdMs        int          // preferred max latency; default 2000
@@ -53,4 +59,69 @@ func selectBestProxy(cands []proxyCandidate, thresholdMs, hardCapMs int) int {
 		}
 	}
 	return best
+}
+
+type proxyGenerator interface {
+	generate(ctx context.Context, country, region, city string, count int) ([]*Proxy, error)
+}
+
+// ensureHealthyProxy verifies the current proxy and, if needed, finds a
+// geography-preserving replacement. It never returns a dead/too-slow proxy:
+// if nothing healthy is found it returns an error (fail-closed).
+func ensureHealthyProxy(ctx context.Context, current *Proxy, gen proxyGenerator, opts EnsureHealthyProxyOptions) (*Proxy, bool, error) {
+	opts.defaults()
+
+	var cands []proxyCandidate
+
+	// 1) Current proxy first — keep it if healthy and under threshold.
+	if current != nil && strings.TrimSpace(current.Host) != "" {
+		res := opts.Checker.Check(ctx, current)
+		if res.Alive && res.LatencyMs <= opts.ThresholdMs {
+			return current, false, nil
+		}
+		cands = append(cands, proxyCandidate{proxy: current, result: res})
+	}
+
+	country := ""
+	city := ""
+	region := ""
+	if current != nil {
+		country = strings.TrimSpace(current.Country)
+		city = strings.TrimSpace(current.City)
+		region = strings.TrimSpace(current.Region)
+	}
+
+	// 2) Round A — same city (only if we have a city).
+	if city != "" {
+		cityProxies, err := gen.generate(ctx, country, region, city, opts.CandidatesPerRound)
+		if err != nil {
+			return nil, false, err
+		}
+		for _, p := range cityProxies {
+			cands = append(cands, proxyCandidate{proxy: p, result: opts.Checker.Check(ctx, p)})
+		}
+	}
+
+	// 3) Round B — same country (if city round produced no live under-threshold pick).
+	if selectBestProxy(cands, opts.ThresholdMs, opts.HardCapMs) == -1 {
+		countryProxies, err := gen.generate(ctx, country, region, "", opts.CandidatesPerRound)
+		if err != nil {
+			return nil, false, err
+		}
+		if len(countryProxies) == 0 && len(cands) == 0 {
+			return nil, false, fmt.Errorf("no proxies available for country %q", country)
+		}
+		for _, p := range countryProxies {
+			cands = append(cands, proxyCandidate{proxy: p, result: opts.Checker.Check(ctx, p)})
+		}
+	}
+
+	// 4) Select under two-tier latency rule.
+	idx := selectBestProxy(cands, opts.ThresholdMs, opts.HardCapMs)
+	if idx == -1 {
+		return nil, false, fmt.Errorf("no healthy proxy found within %dms hard cap for country %q", opts.HardCapMs, country)
+	}
+	chosen := cands[idx].proxy
+	changed := chosen != current
+	return chosen, changed, nil
 }
