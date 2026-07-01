@@ -567,6 +567,22 @@ func runProfileCreate(args []string, global globalOptions, forceLocal ...bool) e
 		"proxy-save-traffic",
 		"save traffic in the generated profile proxy",
 	)
+	country := fs.String(
+		"country",
+		"",
+		"ISO country code; sets language/locale/timezone",
+	)
+	browser := fs.String("browser", "", "browser type: mimic|stealth")
+	osFlag := fs.String("os", "", "os type: windows|macos|linux")
+	lang := fs.String(
+		"lang",
+		"",
+		"override browser UI language, e.g. de-DE",
+	)
+	times := fs.Int("times", 0, "number of profiles to create")
+	notes := fs.String("notes", "", "profile notes")
+	tagsCSV := fs.String("tags", "", "comma-separated tags")
+	start := fs.Bool("start", false, "launch the profile after creation")
 	wait := fs.Bool("wait", false, "verify created profile metas")
 	help := fs.Bool("help", false, "show help")
 	if err := fs.Parse(args); err != nil {
@@ -575,7 +591,9 @@ func runProfileCreate(args []string, global globalOptions, forceLocal ...bool) e
 	if *help {
 		fmt.Fprintln(
 			os.Stdout,
-			"Usage: mlx profile create --file <request.json> [--wait]\n       mlx profile create --template-id <template-id> --name <name> [--folder-id <id>] [--local] [--managed-proxy] [--proxy-country <code>] [--proxy-region <name>] [--proxy-city <name>] [--wait]",
+			"Usage: mlx profile create --file <request.json> [--wait]\n"+
+				"       mlx profile create --template-id <template-id> --name <name> [--folder-id <id>] [--local] [--managed-proxy] [--proxy-country <code>] [--proxy-region <name>] [--proxy-city <name>] [--wait]\n"+
+				"       mlx profile create --name <name> [--country <code>] [--browser <type>] [--os <type>] [--lang <locale>] [--folder-id <id>] [--local] [--times <n>] [--notes <text>] [--tags <a,b>] [--managed-proxy] [--proxy-country <code>] [--wait]",
 		)
 		return nil
 	}
@@ -585,15 +603,89 @@ func runProfileCreate(args []string, global globalOptions, forceLocal ...bool) e
 	if strings.TrimSpace(*file) != "" && strings.TrimSpace(*templateID) != "" {
 		return errors.New("--file and --template-id are mutually exclusive")
 	}
-	if strings.TrimSpace(*file) == "" && strings.TrimSpace(*templateID) == "" {
-		return errors.New("one of --file or --template-id is required")
+	mode := ""
+	switch {
+	case strings.TrimSpace(*file) != "":
+		mode = "file"
+	case strings.TrimSpace(*templateID) != "":
+		mode = "template"
+	case strings.TrimSpace(*name) != "":
+		mode = "flags"
+	default:
+		return errors.New("one of --file, --template-id, or --name is required")
 	}
 
+	// TODO(task 9): wire --start to launch the profile after creation.
+	_ = start
+
 	var req mlx.CreateProfileRequest
-	usingTemplate := strings.TrimSpace(*templateID) != ""
 
 	return withRuntime(global, func(rt *Runtime) error {
-		if !usingTemplate {
+		if mode == "flags" {
+			resolvedFolderID, err := resolveFolderID(rt, *folderID)
+			if err != nil {
+				return err
+			}
+			effBrowser := firstNonEmpty(
+				strings.TrimSpace(*browser),
+				rt.Config.Defaults.Profile.BrowserType,
+			)
+			effOS := firstNonEmpty(
+				strings.TrimSpace(*osFlag),
+				rt.Config.Defaults.Profile.OSType,
+			)
+			effLocal := local.ValueOr(false)
+			if len(forceLocal) > 0 {
+				effLocal = forceLocal[0]
+			}
+			built, err := buildCreateProfileRequestFromFlags(createFromFlagsInput{
+				Name:        *name,
+				BrowserType: effBrowser,
+				OSType:      effOS,
+				Country:     strings.TrimSpace(*country),
+				Lang:        *lang,
+				FolderID:    resolvedFolderID,
+				IsLocal:     effLocal,
+				Times:       *times,
+				Notes:       *notes,
+				Tags:        splitCSV(*tagsCSV),
+			})
+			if err != nil {
+				return err
+			}
+			req = *built
+
+			if *managedProxy || strings.TrimSpace(*proxyCountry) != "" {
+				generated, err := rt.Client.Proxies.GenerateProfileProxy(
+					context.Background(),
+					&mlx.GenerateProfileProxyRequest{
+						GenerateProxyRequest: *buildGenerateProxyRequest(
+							rt.Config,
+							firstNonEmpty(*proxyCountry, *country),
+							*proxyRegion,
+							*proxyCity,
+							*proxyProtocol,
+							*proxySessionType,
+							*proxyIPTTL,
+							1,
+							*proxyStrict,
+						),
+						PreferSOCKS5: strings.TrimSpace(*proxyProtocol) == "" &&
+							rt.Config.Defaults.Proxy.PreferSOCKS5,
+						SaveTraffic: proxySaveTraffic.ValueOr(
+							rt.Config.Defaults.Proxy.SaveTraffic,
+						),
+					},
+				)
+				if err != nil {
+					return err
+				}
+				if req.Parameters == nil {
+					req.Parameters = &mlx.ProfileParameters{}
+				}
+				req.Parameters.Proxy = generated.ProfileProxy
+			}
+		} else if mode == "file" {
 			if err := readJSONFile(*file, &req); err != nil {
 				return err
 			}

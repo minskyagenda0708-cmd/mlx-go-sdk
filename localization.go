@@ -139,6 +139,13 @@ func (c *Client) resolveProxyCountry(ctx context.Context, proxy *Proxy) (string,
 	return "US", nil
 }
 
+// PickScreenResolution selects a believable screen resolution within opts bounds
+// (defaults: 1920x1080). Exposed for CLI flag-based profile creation.
+func PickScreenResolution(opts PatchProfileForProxyOptions) *ScreenFingerprint {
+	opts.defaults()
+	return pickScreenResolution(opts)
+}
+
 // pickScreenResolution selects a random screen resolution from the pool of
 // common real-world resolutions that fits within the given bounds.
 func pickScreenResolution(opts PatchProfileForProxyOptions) *ScreenFingerprint {

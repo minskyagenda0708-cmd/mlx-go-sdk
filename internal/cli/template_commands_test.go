@@ -455,6 +455,65 @@ func TestExecuteExtensionEnableByIDWaitsForObjectUsageBinding(t *testing.T) {
 	}
 }
 
+func TestExecuteProfileCreateFromFlagsLocalizesForCountry(t *testing.T) {
+	t.Setenv(mlx.EnvToken, "test-token")
+
+	var createBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/profile/create":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("ReadAll returned error: %v", err)
+			}
+			createBody = string(body)
+			fmt.Fprint(w, `{"status":{"http_code":200,"message":""},"data":{"ids":["profile-1"]}}`)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	configPath := writeRuntimeConfigFile(t, fmt.Sprintf(`{
+  "version": "1",
+  "endpoints": {
+    "base_url": %q,
+    "launcher_url": %q
+  },
+  "output": {
+    "format": "json"
+  },
+  "retry": {
+    "enabled": false
+  }
+}`, server.URL, server.URL))
+
+	output, err := captureCLIStdout(func() error {
+		return Execute([]string{"--config", configPath, "profile", "create", "--name", "x", "--country", "de", "--browser", "mimic", "--os", "windows", "--folder-id", "f"})
+	})
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	checks := []string{
+		`"name":"x"`,
+		`"browser_type":"mimic"`,
+		`"os_type":"windows"`,
+		`"folder_id":"f"`,
+		`"locale":"de-DE"`,
+		`"zone":"Europe/Berlin"`,
+		`"localization_masking":"custom"`,
+	}
+	for _, check := range checks {
+		if !strings.Contains(createBody, check) {
+			t.Fatalf("expected create request body to contain %s, got %s", check, createBody)
+		}
+	}
+	if !strings.Contains(output, `"ids"`) {
+		t.Fatalf("expected create output to contain ids, got %s", output)
+	}
+}
+
 func captureCLIStdout(fn func() error) (string, error) {
 	oldStdout := os.Stdout
 	r, w, err := os.Pipe()
