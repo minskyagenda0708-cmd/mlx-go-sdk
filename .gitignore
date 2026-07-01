@@ -22,3 +22,6 @@ AGENTS.md
 
 # Large external reference repos kept outside local history
 GithubExamples/
+
+# Git worktrees for isolated feature work
+.worktrees/
