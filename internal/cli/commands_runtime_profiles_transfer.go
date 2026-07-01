@@ -177,6 +177,9 @@ func runLauncherStart(args []string, global globalOptions) error {
 	headless := newOptionalBoolFlag(fs, "headless", "start headless")
 	strict := newOptionalBoolFlag(fs, "strict", "enable strict mode")
 	wait := newOptionalBoolFlag(fs, "wait", "wait for running status")
+	skipProxyCheck := fs.Bool("skip-proxy-check", false, "DANGEROUS: skip the pre-launch proxy health check")
+	proxyThreshold := fs.Int("proxy-threshold-ms", 0, "override proxy latency threshold (ms)")
+	proxyHardCap := fs.Int("proxy-hard-cap-ms", 0, "override proxy latency hard cap (ms)")
 	help := fs.Bool("help", false, "show help")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -184,7 +187,7 @@ func runLauncherStart(args []string, global globalOptions) error {
 	if *help {
 		fmt.Fprintln(
 			os.Stdout,
-			"Usage: mlx launcher start --profile-id <id> | --profile-name <name> [--folder-id <id>] [--automation-type <type>] [--headless] [--strict] [--wait]",
+			"Usage: mlx launcher start --profile-id <id> | --profile-name <name> [--folder-id <id>] [--automation-type <type>] [--headless] [--strict] [--wait] [--skip-proxy-check] [--proxy-threshold-ms <ms>] [--proxy-hard-cap-ms <ms>]",
 		)
 		return nil
 	}
@@ -216,6 +219,16 @@ func runLauncherStart(args []string, global globalOptions) error {
 		}
 
 		if strings.TrimSpace(*profileName) != "" {
+			// Resolve the name to a concrete profile ID so the fail-closed
+			// proxy check runs before StartProfileByName (cannot be bypassed
+			// via --profile-name).
+			named, err := resolveProfile(rt, "", *profileName, *folderID)
+			if err != nil {
+				return err
+			}
+			if err := ensureProxyBeforeStart(rt, named.ID, *skipProxyCheck, *proxyThreshold, *proxyHardCap); err != nil {
+				return err
+			}
 			resp, err := rt.Client.Workflows.StartProfileByName(
 				context.Background(),
 				*profileName,
@@ -235,6 +248,9 @@ func runLauncherStart(args []string, global globalOptions) error {
 
 		profile, err := resolveProfile(rt, *profileID, "", *folderID)
 		if err != nil {
+			return err
+		}
+		if err := ensureProxyBeforeStart(rt, profile.ID, *skipProxyCheck, *proxyThreshold, *proxyHardCap); err != nil {
 			return err
 		}
 		startResp, _, err := rt.Client.Launcher.Start(
@@ -266,6 +282,55 @@ func runLauncherStart(args []string, global globalOptions) error {
 			"automation_type": startAutomation,
 		})
 	})
+}
+
+// ensureProxyBeforeStart runs the fail-closed proxy continuity check for the
+// given profile before it is launched. When proxy continuity is disabled or
+// skip is set, it is a no-op. On ANY proxy-check error it returns the error so
+// the caller does NOT start the profile (fail-closed). If a healthier proxy is
+// chosen, it is patched onto the profile before returning.
+func ensureProxyBeforeStart(rt *Runtime, profileID string, skip bool, thresholdOverride, hardCapOverride int) error {
+	if !rt.Config.Defaults.Proxy.Continuity.Enabled || skip {
+		return nil
+	}
+
+	meta, _, err := rt.Client.Profiles.GetMeta(context.Background(), profileID)
+	if err != nil {
+		return err
+	}
+	var current *mlx.Proxy
+	if meta != nil && meta.Parameters != nil {
+		current = meta.Parameters.Proxy
+	}
+
+	pc := rt.Config.Defaults.Proxy.Continuity
+	chosen, changed, err := rt.Client.Proxies.EnsureHealthyProxy(
+		context.Background(),
+		current,
+		mlx.EnsureHealthyProfileProxyOptions{
+			EnsureHealthyProxyOptions: mlx.EnsureHealthyProxyOptions{
+				ThresholdMs:        firstPositive(thresholdOverride, pc.LatencyThresholdMs),
+				HardCapMs:          firstPositive(hardCapOverride, pc.LatencyHardCapMs),
+				CandidatesPerRound: pc.CandidatesPerRound,
+				Checker: mlx.NewHTTPProxyChecker(mlx.HTTPProxyCheckerConfig{
+					Targets:          pc.CheckTargets,
+					PerTargetTimeout: pc.CheckTimeout.Duration(),
+				}),
+			},
+			PreferSOCKS5: rt.Config.Defaults.Proxy.PreferSOCKS5,
+			SaveTraffic:  rt.Config.Defaults.Proxy.SaveTraffic,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("pre-launch proxy check failed: %w", err)
+	}
+	if changed {
+		patch := &mlx.PatchProfileRequest{ProfileID: profileID, Proxy: chosen}
+		if _, _, err := rt.Client.Profiles.Patch(context.Background(), patch); err != nil {
+			return fmt.Errorf("apply replacement proxy: %w", err)
+		}
+	}
+	return nil
 }
 
 func runLauncherStop(args []string, global globalOptions) error {

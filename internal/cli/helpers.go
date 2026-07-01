@@ -561,6 +561,14 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+// firstPositive returns a if it is positive, otherwise b.
+func firstPositive(a, b int) int {
+	if a > 0 {
+		return a
+	}
+	return b
+}
+
 func isAlreadyStoppedError(err error) bool {
 	if err == nil {
 		return false

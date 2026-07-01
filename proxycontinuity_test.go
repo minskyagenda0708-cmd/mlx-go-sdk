@@ -109,6 +109,18 @@ func TestEnsureHealthyProxyFallsBackToCountry(t *testing.T) {
 	}
 }
 
+func TestServiceEnsureHealthyProxyKeepsHealthyCurrentNoGenerate(t *testing.T) {
+	s := &ProxyServiceOp{} // client unused because current is healthy
+	current := &Proxy{Host: "cur", Country: "DE", City: "Berlin"}
+	chk := mapChecker{byHost: map[string]ProxyCheckResult{"cur": {Alive: true, LatencyMs: 500}}}
+	got, changed, err := s.EnsureHealthyProxy(context.Background(), current, EnsureHealthyProfileProxyOptions{
+		EnsureHealthyProxyOptions: EnsureHealthyProxyOptions{Checker: chk},
+	})
+	if err != nil || changed || got.Host != "cur" {
+		t.Fatalf("expected healthy current kept, got host=%v changed=%v err=%v", got, changed, err)
+	}
+}
+
 func TestEnsureHealthyProxyFailsClosedWhenNoneAlive(t *testing.T) {
 	current := &Proxy{Host: "cur", Country: "DE", City: "Berlin"}
 	gen := &fakeGen{

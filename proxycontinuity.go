@@ -125,3 +125,51 @@ func ensureHealthyProxy(ctx context.Context, current *Proxy, gen proxyGenerator,
 	changed := chosen != current
 	return chosen, changed, nil
 }
+
+// EnsureHealthyProfileProxyOptions configures the service-level continuity check.
+type EnsureHealthyProfileProxyOptions struct {
+	EnsureHealthyProxyOptions
+	Region       string
+	PreferSOCKS5 bool
+	SaveTraffic  bool
+}
+
+// clientProxyGenerator generates candidates via the MLX proxy API.
+type clientProxyGenerator struct {
+	svc          *ProxyServiceOp
+	preferSOCKS5 bool
+	saveTraffic  bool
+}
+
+func (g clientProxyGenerator) generate(ctx context.Context, country, region, city string, count int) ([]*Proxy, error) {
+	out := make([]*Proxy, 0, count)
+	for i := 0; i < count; i++ {
+		res, err := g.svc.GenerateProfileProxy(ctx, &GenerateProfileProxyRequest{
+			GenerateProxyRequest: GenerateProxyRequest{
+				Country: country,
+				Region:  region,
+				City:    city,
+				Count:   1,
+			},
+			PreferSOCKS5: g.preferSOCKS5,
+			SaveTraffic:  g.saveTraffic,
+		})
+		if err != nil {
+			// Stop generating more; return what we have (may be empty).
+			if len(out) == 0 {
+				return nil, err
+			}
+			return out, nil
+		}
+		if res != nil && res.ProfileProxy != nil {
+			out = append(out, res.ProfileProxy)
+		}
+	}
+	return out, nil
+}
+
+// EnsureHealthyProxy verifies current and finds a geo-preserving replacement if needed.
+func (s *ProxyServiceOp) EnsureHealthyProxy(ctx context.Context, current *Proxy, opts EnsureHealthyProfileProxyOptions) (*Proxy, bool, error) {
+	gen := clientProxyGenerator{svc: s, preferSOCKS5: opts.PreferSOCKS5, saveTraffic: opts.SaveTraffic}
+	return ensureHealthyProxy(ctx, current, gen, opts.EnsureHealthyProxyOptions)
+}
