@@ -48,6 +48,30 @@ go build ./cmd/mlx
 go run ./cmd/mlx --help
 ```
 
+### Global install
+
+Install the CLI globally so `mlx` is available on your `PATH`:
+
+```bash
+go install github.com/minskyagenda0708-cmd/mlx-go-sdk/cmd/mlx@latest
+```
+
+`go install` places the `mlx` binary in `$(go env GOBIN)`, or `$(go env GOPATH)/bin` when `GOBIN` is unset. Ensure that directory is on your `PATH`.
+
+Authentication is read **only** from the `MLX_TOKEN` environment variable — never from flags or config files.
+
+```bash
+export MLX_TOKEN=your-token
+mlx --version
+mlx profile --help
+```
+
+To stamp a version into the binary at install time, override `CLIVersion` with ldflags:
+
+```bash
+go install -ldflags "-X github.com/minskyagenda0708-cmd/mlx-go-sdk/internal/cli.CLIVersion=v0.1.0" ./cmd/mlx
+```
+
 Current command groups are:
 
 - `config`
